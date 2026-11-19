@@ -1,8 +1,8 @@
 # Difqo
 
-Open source Agent Factory for Solo Builders and Small Teams
+Difqo is an AI coworker for engineering work, currently in development. We’re building it to check GitHub for context, ask a teammate a question in Slack with your approval, and bring a patch and tests back for your review.
 
-Difqo is in development. We’re building a way for coding agents to carry project decisions from one task to the next and bring the work back to you for review.
+An engineer can start alone. A colleague can answer in Slack without joining Difqo. The public repository currently contains the project overview and its [Apache 2.0 license](LICENSE).
 
 [Join the early-access waitlist](https://difqo.com/#waitlist) to hear when access opens. You can also tell us which task you want Difqo to take off your plate.
 
