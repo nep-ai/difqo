@@ -86,10 +86,14 @@ with TemporaryDirectory(prefix='difqo-smoke-') as scratch:
         assert api(path, 'PUT', {'exit_code': 1, 'output': 'conflict'})[0] == 409
         assert api('/tasks/claim', 'POST', {})[0] == 204
 
-        assert api('/tasks', 'POST', {'goal': 'Concurrent claim'})[0] == 201
+        status, concurrent = api('/tasks', 'POST', {'goal': 'Concurrent claim'})
+        assert status == 201
         with ThreadPoolExecutor(max_workers=12) as clients:
-            claims = list(clients.map(lambda _: api('/tasks/claim', 'POST', {})[0], range(12)))
-        assert sorted(claims) == [200] + [204] * 11, claims
+            claims = list(clients.map(lambda _: api('/tasks/claim', 'POST', {}), range(12)))
+        assert sorted(status for status, _ in claims) == [200] + [204] * 11, claims
+        winner = next(task for status, task in claims if status == 200)
+        assert winner['id'] == concurrent['id']
+        assert api(f"/attempts/{winner['attempt']['id']}/result", 'PUT', result)[0] == 204
 
         status, failed = api('/tasks', 'POST', {'goal': 'Check an unavailable checkout'})
         assert status == 201
