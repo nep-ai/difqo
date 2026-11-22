@@ -86,11 +86,15 @@ func (o Options) Run(ctx context.Context, repo string, task store.Task) store.Re
 	}
 
 	c := container{name: "difqo-" + filepath.Base(dir), image: o.Image, workspace: workspace}
-	if err := c.codex(ctx, o.AuthHome, task.Goal); err != nil {
+	if diagnostic, err := c.codex(ctx, o.AuthHome, task.Goal); err != nil {
 		if errors.Is(err, ErrAuthentication) {
 			return store.Result{ExitCode: 125, Output: "Codex sign-in required", Blocked: true}
 		}
-		return store.Result{ExitCode: 125, Output: "Codex execution did not complete"}
+		result := store.Result{ExitCode: 125, Output: diagnostic}
+		if os.WriteFile(filepath.Join(dir, "execution.log"), []byte(diagnostic+"\n"), 0o600) == nil {
+			result.Artifacts = filepath.Base(dir)
+		}
+		return result
 	}
 
 	var tooLarge bool
@@ -119,18 +123,18 @@ func (o Options) Run(ctx context.Context, repo string, task store.Task) store.Re
 	return store.Result{ExitCode: checkExit, Output: output, Artifacts: filepath.Base(dir)}
 }
 
-type cappedFile struct {
-	file      *os.File
+type cappedOutput struct {
+	writer    io.Writer
 	remaining int
 	truncated *bool
 }
 
-func (w *cappedFile) Write(p []byte) (int, error) {
+func (w *cappedOutput) Write(p []byte) (int, error) {
 	kept := min(len(p), w.remaining)
 	if kept != len(p) {
 		*w.truncated = true
 	}
-	n, err := w.file.Write(p[:kept])
+	n, err := w.writer.Write(p[:kept])
 	w.remaining -= n
 	if err != nil {
 		return n, err
@@ -143,6 +147,6 @@ func captureFile(dir, name string, truncated *bool, capture func(io.Writer) (int
 	if err != nil {
 		return 125, err
 	}
-	code, err := capture(&cappedFile{file: f, remaining: 4 << 20, truncated: truncated})
+	code, err := capture(&cappedOutput{writer: f, remaining: 4 << 20, truncated: truncated})
 	return code, errors.Join(err, f.Close())
 }

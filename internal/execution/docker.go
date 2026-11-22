@@ -1,7 +1,9 @@
 package execution
 
 import (
+	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -38,39 +40,72 @@ func (c container) remove() {
 	_ = exec.CommandContext(ctx, "docker", "rm", "-f", c.name).Run()
 }
 
-func (c container) codex(ctx context.Context, authHome, goal string) error {
+func (c container) codex(ctx context.Context, authHome, goal string) (string, error) {
 	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
 	cmd := c.command(ctx, authHome,
 		"timeout", "-k", "5s", "120s", "codex", "app-server", "--stdio",
 		"-c", `cli_auth_credentials_store="file"`,
 		"-c", `default_permissions="difqo"`,
 		"-c", `permissions={difqo={extends=":workspace",filesystem={":root"="deny",":minimal"="read","/usr/local"="read","/codex-home"="deny"}}}`,
 	)
+	var stderr bytes.Buffer
+	var truncated bool
+	cmd.Stderr = &cappedOutput{writer: &stderr, remaining: 64 << 10, truncated: &truncated}
+	cmd.WaitDelay = 2 * time.Second
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
-		cancel()
-		return err
+		return "could not open Docker input", err
 	}
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
-		cancel()
-		return err
+		return "could not open Docker output", err
 	}
 	if err := cmd.Start(); err != nil {
-		cancel()
-		return err
+		return "could not start the Docker CLI", err
 	}
 	defer c.remove()
+	stop := context.AfterFunc(ctx, func() {
+		_ = stdin.Close()
+		_ = stdout.Close()
+	})
+	defer stop()
 	err = runCodex(stdin, stdout, goal)
 	cancel()
-	_ = cmd.Wait()
-	return err
+	waitErr := cmd.Wait()
+	if err == nil || errors.Is(err, ErrAuthentication) {
+		return "", err
+	}
+	return codexDiagnostic(stderr.String(), waitErr, err), err
+}
+
+// Use fixed messages selected by known signatures. Raw stderr can contain
+// credentials, repository data, or text emitted by a tool in the turn.
+func codexDiagnostic(stderr string, waitErr, rpcErr error) string {
+	stderr = strings.ToLower(stderr)
+	switch {
+	case strings.Contains(stderr, "invalid mount config"), strings.Contains(stderr, "mounts denied"),
+		strings.Contains(stderr, "bind source path does not exist"):
+		return "Docker rejected a bind mount. Check file sharing and directory access."
+	case strings.Contains(stderr, "cannot connect to the docker daemon"), strings.Contains(stderr, "error during connect"):
+		return "Docker engine is unavailable. Check the Docker context and engine status."
+	case errors.Is(rpcErr, errSandbox), strings.Contains(stderr, "bwrap:"), strings.Contains(stderr, "sandbox helper"):
+		return "Codex sandbox startup failed. Check runtime support for the Linux sandbox."
+	case strings.Contains(stderr, "failed to load configuration"), strings.Contains(stderr, "startup configuration unavailable"):
+		return "Codex could not load its startup configuration. Check the dedicated Codex home."
+	}
+	var exit *exec.ExitError
+	if errors.As(waitErr, &exit) && exit.ExitCode() >= 0 {
+		return fmt.Sprintf("Docker or Codex exited with status %d before the turn completed.", exit.ExitCode())
+	}
+	return "The Codex App Server connection ended before the turn completed."
 }
 
 func (c container) capture(ctx context.Context, stdout, stderr io.Writer, script string, args ...string) (int, error) {
 	cmd := c.command(ctx, "", append([]string{"timeout", "-k", "5s", "25s", "sh", "-c", script, "difqo"}, args...)...)
 	cmd.Stdout = stdout
 	cmd.Stderr = stderr
+	cmd.WaitDelay = 2 * time.Second
 	defer c.remove()
 	err := cmd.Run()
 	if err == nil {

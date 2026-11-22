@@ -9,6 +9,7 @@ import (
 )
 
 var ErrAuthentication = errors.New("Codex authentication is required")
+var errSandbox = errors.New("Codex sandbox failed")
 
 type message struct {
 	ID     json.RawMessage `json:"id,omitempty"`
@@ -184,6 +185,9 @@ func runCodex(stdin io.Writer, stdout io.Reader, goal string) error {
 		}
 		if completion.Turn.Error != nil && authFailure(completion.Turn.Error.Info) {
 			return ErrAuthentication
+		}
+		if completion.Turn.Error != nil && bytes.Equal(completion.Turn.Error.Info, []byte(`"sandboxError"`)) {
+			return errSandbox
 		}
 		return errors.New("Codex turn did not complete")
 	}

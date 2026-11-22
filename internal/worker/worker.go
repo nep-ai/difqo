@@ -28,7 +28,7 @@ func Run(ctx context.Context, address string, repo string, executionOptions *exe
 	if executionOptions == nil {
 		result = checkHead(ctx, repo)
 	} else {
-		runCtx, cancel := context.WithCancel(ctx)
+		runCtx, cancel := context.WithTimeout(ctx, 210*time.Second)
 		defer cancel()
 		heartbeat := make(chan error, 1)
 		go func() {
@@ -39,6 +39,11 @@ func Run(ctx context.Context, address string, repo string, executionOptions *exe
 			}
 		}()
 		result = executionOptions.Run(runCtx, repo, task)
+		if errors.Is(runCtx.Err(), context.DeadlineExceeded) {
+			result.ExitCode = 124
+			result.Output = "Codex execution exceeded the host deadline"
+			result.Blocked = false
+		}
 		cancel()
 		if err := <-heartbeat; err != nil {
 			return err

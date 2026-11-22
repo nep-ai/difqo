@@ -93,6 +93,9 @@ compares the Codex edit with the initial commit and includes new files. The
 source repository remains available for review. The check runs in a separate
 container without network access or the Codex home mount. A missing or rejected
 sign-in produces `"status": "blocked"`. Sign in and submit a new task to retry.
+The worker allows up to three and a half minutes for the full host-side
+execution. App Server startup and turn failures can include a private
+`execution.log` with a fixed diagnostic selected from the error category.
 
 ## PostgreSQL smoke test
 
