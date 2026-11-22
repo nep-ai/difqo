@@ -43,3 +43,18 @@ go build -o bin/difqo ./cmd/difqo
 ```
 
 The [architecture document](architecture.md) describes the current limitations.
+
+## PostgreSQL smoke test
+
+CI runs the smoke test with a disposable PostgreSQL service. To reproduce it
+locally, build the binary as above, set `DIFQO_DATABASE_URL` to a fresh disposable
+database, and run:
+
+```sh
+psql "$DIFQO_DATABASE_URL" -v ON_ERROR_STOP=1 -f migrations/0001_tasks.sql
+python3 scripts/postgres-smoke.py bin/difqo
+```
+
+The script starts and restarts the server, runs a worker against a synthetic Git
+checkout, and checks concurrent claims and result persistence. It leaves the
+test records in the disposable database.
