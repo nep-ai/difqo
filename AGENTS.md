@@ -24,6 +24,7 @@ Use the build and check commands documented by the implementation. When introduc
 ## Working efficiently
 
 - Choose the smallest complete change. Reuse existing behavior and established interfaces before adding abstractions, options, or dependencies. Preserve correctness, security, accessibility, and the checks the change requires.
+- Once a self-contained change passes its relevant checks, push a feature branch and open a focused PR. Keep each PR independently reviewable and safe to merge. Put unrelated work in separate PRs.
 - Lead updates and handoffs with the outcome. Include the changed paths, checks and results, and any blockers or uncertainty that affect the decision. Keep commands, paths, and evidence exact. Expand when the user asks or the tradeoff needs explanation.
 - Use Serena for symbol definitions and references in supported languages when it is connected. Confirm the active project is this checkout before using it. Use `rg` and targeted reads for documentation, config, unsupported languages, or when Serena is unavailable.
 - If RTK is available, use explicit wrappers such as `rtk git status` for routine summaries. Use the original command when you need a complete diff, exact logs, or machine-readable output. Use the original command when RTK is unavailable.

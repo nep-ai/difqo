@@ -7,6 +7,7 @@ GitHub is the record for public decisions, accepted work, and releases. Use [dif
 - Review the issue and PR queues weekly while the MVP is being built. Confirm scope and impact, link duplicates to the original, and ask for the smallest useful clarification when context is missing.
 - Use `bug`, `documentation`, and `enhancement` to identify the work. Use `accepted` once a maintainer agrees the work fits the current milestone. Use `good first issue` for scoped work with a clear acceptance check and enough context for a newcomer.
 - Describe the outcome and acceptance criteria on each accepted issue. Create an MVP milestone when the initial implementation issues exist. Record significant design decisions and their rationale alongside the code when they’re settled.
+- For every PR, check the diff against [the architecture document](docs/architecture.md). If it changes architecture, require both an [ADR](docs/adr/) that records the decision and an update to the architecture document and affected Mermaid diagrams in the same PR before merging.
 - Route changes to `main` through focused PRs and squash-merge after reviewing the final diff, verification evidence, and any outstanding review threads. The maintainer who merges the change owns that decision.
 - Triage sensitive vulnerability and conduct reports through the private channels described in the relevant policies.
 

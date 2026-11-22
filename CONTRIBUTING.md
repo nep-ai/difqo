@@ -14,7 +14,7 @@ Use sanitized examples in public issues and pull requests. Follow the [code of c
 
 1. For a feature or substantial change, open an issue and agree on scope with a maintainer before implementing. Small documentation fixes can go straight to a PR.
 2. Fork the repo or create a branch from `main`. Keep the change focused and link the relevant issue in the PR.
-3. Review the diff, check the links and examples you changed, and describe how you verified the result. Include screenshots or recordings when the change affects what users see.
+3. Review the diff, check the links and examples you changed, and describe how you verified the result. Check the PR against the [architecture document](docs/architecture.md). If the PR changes architecture, include the corresponding [ADR](docs/adr/) and the updated architecture document and affected Mermaid diagrams in that PR. Include screenshots or recordings when the change affects what users see.
 4. If you used an AI coding tool, review its output yourself and disclose substantial generated changes in the PR. The submitter is responsible for correctness, attribution, and licensing.
 
 By submitting a contribution, you agree to license it under the project’s [Apache License 2.0](LICENSE). Submit work you have the right to share.
