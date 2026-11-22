@@ -13,6 +13,19 @@ jobs:
     name: Go checks
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    services:
+      postgres:
+        image: postgres:18.6
+        env:
+          POSTGRES_DB: difqo_smoke
+          POSTGRES_PASSWORD: smoke-test
+        ports:
+          - 5432/tcp
+        options: >-
+          --health-cmd "pg_isready -h 127.0.0.1 -U postgres -d difqo_smoke"
+          --health-interval 2s
+          --health-timeout 5s
+          --health-retries 15
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
@@ -33,3 +46,12 @@ jobs:
       - run: go vet ./...
       - run: go test ./...
       - run: go build -o bin/difqo ./cmd/difqo
+
+      - name: Smoke test against PostgreSQL
+        env:
+          POSTGRES_CONTAINER: ${{ job.services.postgres.id }}
+          POSTGRES_PORT: ${{ job.services.postgres.ports['5432'] }}
+        run: |
+          docker exec -i "$POSTGRES_CONTAINER" psql -U postgres -d difqo_smoke -v ON_ERROR_STOP=1 < migrations/0001_tasks.sql
+          DIFQO_DATABASE_URL="postgres://postgres:smoke-test@127.0.0.1:${POSTGRES_PORT}/difqo_smoke?sslmode=disable" \
+            python3 scripts/postgres-smoke.py bin/difqo
