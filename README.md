@@ -20,6 +20,7 @@ The initial local task flow is available for development. See the [local setup g
 
 - [Share a workflow](https://github.com/nep-ai/difqo/issues/new?template=workflow.yml) you’d like to delegate or [report a problem](https://github.com/nep-ai/difqo/issues/new?template=bug.yml) with the docs or demos.
 - Read the [contribution guide](CONTRIBUTING.md) and [code of conduct](CODE_OF_CONDUCT.md).
+- Use the [brand guidelines](docs/brand.md) when writing about Difqo or designing its interface.
 - Report vulnerabilities through our [security policy](SECURITY.md).
 
 [Apache License 2.0](LICENSE)
