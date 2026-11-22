@@ -8,12 +8,15 @@ import (
 	"log"
 	"mime"
 	"net/http"
+	"regexp"
 	"strconv"
 	"strings"
 	"unicode/utf8"
 
 	"github.com/nep-ai/difqo/internal/store"
 )
+
+var artifactSuffix = regexp.MustCompile(`^[0-9]+$`)
 
 func Handler(tasks store.Tasks) http.Handler {
 	router := http.NewServeMux()
@@ -85,18 +88,26 @@ func Handler(tasks store.Tasks) http.Handler {
 			return
 		}
 		var request struct {
-			ExitCode *int    `json:"exit_code"`
-			Output   *string `json:"output"`
+			ExitCode  *int    `json:"exit_code"`
+			Output    *string `json:"output"`
+			Blocked   bool    `json:"blocked"`
+			Artifacts string  `json:"artifacts"`
 		}
 		if !decode(w, r, &request) {
 			return
 		}
+		artifactPrefix := "attempt-" + strconv.FormatInt(id, 10) + "-"
+		suffix, hasPrefix := strings.CutPrefix(request.Artifacts, artifactPrefix)
 		if request.ExitCode == nil || *request.ExitCode < 0 || *request.ExitCode > 255 ||
-			request.Output == nil || strings.ContainsRune(*request.Output, 0) {
+			request.Output == nil || strings.ContainsRune(*request.Output, 0) ||
+			(request.Artifacts != "" && (len(request.Artifacts) > 64 || !hasPrefix || !artifactSuffix.MatchString(suffix))) ||
+			(request.Blocked && (*request.ExitCode == 0 || request.Artifacts != "")) {
 			http.Error(w, "invalid result", http.StatusBadRequest)
 			return
 		}
-		err := tasks.Complete(r.Context(), id, store.Result{ExitCode: *request.ExitCode, Output: *request.Output})
+		err := tasks.Complete(r.Context(), id, store.Result{
+			ExitCode: *request.ExitCode, Output: *request.Output, Blocked: request.Blocked, Artifacts: request.Artifacts,
+		})
 		if err != nil {
 			storeError(w, err)
 			return

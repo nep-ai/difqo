@@ -1,0 +1,5 @@
+FROM difqo-codex:0.171.0
+COPY codex-app-server.mjs /opt/difqo-smoke/codex-app-server.mjs
+RUN printf '#!/bin/sh\nexec node /opt/difqo-smoke/codex-app-server.mjs\n' > /usr/local/bin/codex-smoke \
+    && chmod +x /usr/local/bin/codex-smoke \
+    && ln -sf /usr/local/bin/codex-smoke /usr/local/bin/codex

@@ -9,11 +9,15 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"os/signal"
+	"path/filepath"
 	"strconv"
+	"syscall"
 	"time"
 
 	_ "github.com/jackc/pgx/v5/stdlib"
 	"github.com/nep-ai/difqo/internal/controlplane"
+	"github.com/nep-ai/difqo/internal/execution"
 	"github.com/nep-ai/difqo/internal/store"
 	"github.com/nep-ai/difqo/internal/worker"
 )
@@ -31,10 +35,15 @@ func run(args []string) error {
 	flags := flag.NewFlagSet(args[0], flag.ContinueOnError)
 	port := flags.Int("port", 8765, "loopback API port")
 	var repo *string
+	var options execution.Options
 	switch args[0] {
 	case "server":
 	case "worker":
 		repo = flags.String("repo", "", "path to a local Git checkout")
+		flags.StringVar(&options.Image, "codex-image", "", "local Docker image for Codex execution")
+		flags.StringVar(&options.Check, "check", "", "shell command to run in the isolated checkout")
+		flags.StringVar(&options.ArtifactRoot, "artifacts", "", "absolute host path for execution artifacts")
+		flags.StringVar(&options.AuthHome, "codex-home", "", "absolute path to a dedicated private Codex home")
 	default:
 		return errors.New("usage: difqo server | difqo worker -repo PATH")
 	}
@@ -52,7 +61,21 @@ func run(args []string) error {
 		if *repo == "" {
 			return errors.New("worker requires -repo PATH")
 		}
-		return worker.Run(context.Background(), "http://"+address, *repo)
+		var runOptions *execution.Options
+		if options != (execution.Options{}) {
+			resolved, err := filepath.Abs(*repo)
+			if err != nil {
+				return err
+			}
+			*repo = resolved
+			if err := options.Validate(*repo); err != nil {
+				return err
+			}
+			runOptions = &options
+		}
+		ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+		defer cancel()
+		return worker.Run(ctx, "http://"+address, *repo, runOptions)
 	}
 
 	dsn := os.Getenv("DIFQO_DATABASE_URL")
