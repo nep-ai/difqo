@@ -1,5 +1,13 @@
-# Request the repository maintainer for changes to contribution and review policy.
+# Request the repository maintainer for changes to contribution policy, review workflows, and agent guidance.
 /.github/ @shashanknidhi
 /CONTRIBUTING.md @shashanknidhi
 /CODE_OF_CONDUCT.md @shashanknidhi
 /SECURITY.md @shashanknidhi
+/AGENTS.md @shashanknidhi
+/.agents/ @shashanknidhi
+/.codex/ @shashanknidhi
+/.claude/ @shashanknidhi
+/.cursor/ @shashanknidhi
+/.mcp.json @shashanknidhi
+/.serena/ @shashanknidhi
+/CLAUDE.md @shashanknidhi
