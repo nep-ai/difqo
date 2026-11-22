@@ -33,5 +33,13 @@ should show exit code `0` and the same revision as
 `git -C /path/to/disposable-checkout rev-parse --verify HEAD`. The worker handles
 one claim and exits. Both commands accept `-port` to select a matching API port.
 
-Run `go test ./...` and `go vet ./...` before review. The
-[architecture document](architecture.md) describes the current limitations.
+Run the same checks as [Go CI](../.github/workflows/go.yml) before review.
+
+```sh
+gofmt -l .  # Expect no output.
+go vet ./...
+go test ./...
+go build -o bin/difqo ./cmd/difqo
+```
+
+The [architecture document](architecture.md) describes the current limitations.
