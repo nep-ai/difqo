@@ -1,0 +1,8 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Early-access waitlist
+    url: https://difqo.com/#waitlist
+    about: Sign up to hear when early access opens.
+  - name: Private vulnerability report
+    url: https://github.com/nep-ai/difqo/security/advisories/new
+    about: Share security findings privately with the maintainers.

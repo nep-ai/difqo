@@ -1,0 +1,28 @@
+name: Report a problem
+description: Report a problem with the repository, website, or illustrated workflows.
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        This report is public. Keep credentials and private project details out of it.
+        [Report a vulnerability privately](https://github.com/nep-ai/difqo/security/advisories/new).
+  - type: input
+    id: location
+    attributes:
+      label: Where did you see the problem?
+      description: Include the page URL, file path, or workflow name.
+    validations:
+      required: true
+  - type: textarea
+    id: behavior
+    attributes:
+      label: What happened?
+      description: Include the steps you took and what you expected to happen.
+    validations:
+      required: true
+  - type: textarea
+    id: context
+    attributes:
+      label: Additional context
+      description: Add a browser or device if relevant, or attach a redacted screenshot.
