@@ -128,3 +128,26 @@ verify missing sign-in and a synthetic JSON-RPC turn to verify patch capture.
 docker build -t difqo-codex-smoke -f scripts/fixtures/Dockerfile.codex-smoke scripts/fixtures
 DIFQO_SMOKE_CODEX=1 python3 scripts/postgres-smoke.py bin/difqo
 ```
+
+## Chief of Staff web app
+
+Set up the database and Go binary using the instructions above. Install Node.js
+24 and build the frontend from the repository root.
+
+```sh
+corepack pnpm@10.34.9 install --frozen-lockfile
+corepack pnpm@10.34.9 --filter difqo-local-ui build
+./bin/difqo server -web web/dist
+```
+
+Open `http://127.0.0.1:8765`, submit a goal, then run the local worker in a
+separate terminal. The conversation shows the saved goal, the latest run
+status, and the worker's actual output. The default worker reports the
+repository revision. To view a Codex patch and check output, pass the same
+absolute `-artifacts` directory to the server and worker. Create that directory
+before starting the server. Keep the application on loopback.
+
+For frontend development, start the server on the default port, then run
+`corepack pnpm@10.34.9 --filter difqo-local-ui dev`. The Vite server proxies API
+requests to Difqo. The frontend follows the [Difqo brand guidelines](brand.md)
+and serves its fonts locally.

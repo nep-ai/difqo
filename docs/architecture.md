@@ -4,12 +4,15 @@
 
 ```mermaid
 flowchart LR
-    Operator["Local operator"] -->|"Submit goal or read result over loopback HTTP"| Server["difqo server"]
+    Operator["Local operator"] --> Browser["Chief of Staff web app"]
+    Browser -->|"Submit goals and read real results over loopback HTTP"| Server["difqo server"]
+    Operator -->|"Run the worker when ready"| Worker
     Worker["difqo worker"] -->|"Claim a leased attempt and report its result over loopback HTTP"| Server
     Server -->|"Lock claims and persist attempt deadlines and results"| Postgres[("PostgreSQL on host")]
     Worker -->|"Read HEAD or make a shallow clone"| Repo["Operator-selected Git checkout"]
     Worker -->|"Run one App Server turn over stdio"| Codex["Disposable Docker execution workspace"]
     Worker -->|"Capture diff and check log"| Artifacts["Host artifact directory"]
+    Server -->|"Read attempt-bound evidence"| Artifacts
 ```
 
 The local operator starts the server and starts a worker with a checkout path.
@@ -29,6 +32,18 @@ The server uses an unauthenticated loopback API for the groundwork. Run it
 in a trusted local development environment. PostgreSQL stores the revision check
 output directly. The development workflow and API examples are in the [local
 setup guide](development.md).
+
+## Chief of Staff web app
+
+The Go server can serve the built React app and API on the same loopback origin.
+The conversation is reconstructed from the 100 newest saved goals and their
+latest attempts. Submitting a goal uses the existing task intake. The browser
+polls for state changes and expands available worker artifacts in a project file.
+The app reports the worker's recorded result. Local patch approval and rerunning
+checks against a reviewed patch remain planned in issue [#10](https://github.com/nep-ai/difqo/issues/10).
+
+See [ADR 0004](adr/0004-local-web-app.md) and the
+[local web setup](development.md#chief-of-staff-web-app).
 
 ## MVP target
 

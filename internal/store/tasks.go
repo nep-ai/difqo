@@ -45,7 +45,43 @@ func (s Tasks) Create(ctx context.Context, goal string) (Task, error) {
 	return task, err
 }
 
+const taskQuery = `
+		SELECT t.id, t.goal,
+			CASE
+				WHEN a.blocked THEN 'blocked'
+				WHEN a.completed_at IS NOT NULL THEN 'completed'
+				WHEN a.lease_expires_at > statement_timestamp() THEN 'claimed'
+				WHEN a.attempt_number = $1 THEN 'exhausted'
+				ELSE 'queued'
+			END,
+			a.id, a.attempt_number, a.lease_expires_at, a.completed_at, a.exit_code, a.output, a.blocked, a.artifacts
+		FROM tasks t LEFT JOIN LATERAL (
+			SELECT id, attempt_number, lease_expires_at, completed_at, exit_code, output, blocked, artifacts
+			FROM attempts WHERE task_id = t.id ORDER BY attempt_number DESC LIMIT 1
+		) a ON true`
+
 func (s Tasks) Get(ctx context.Context, id int64) (Task, error) {
+	return scanTask(s.DB.QueryRowContext(ctx, taskQuery+" WHERE t.id = $2", maxAttempts, id))
+}
+
+func (s Tasks) Recent(ctx context.Context) ([]Task, error) {
+	rows, err := s.DB.QueryContext(ctx, taskQuery+" ORDER BY t.id DESC LIMIT 100", maxAttempts)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	tasks := make([]Task, 0)
+	for rows.Next() {
+		task, err := scanTask(rows)
+		if err != nil {
+			return nil, err
+		}
+		tasks = append(tasks, task)
+	}
+	return tasks, rows.Err()
+}
+
+func scanTask(row interface{ Scan(...any) error }) (Task, error) {
 	var task Task
 	var attempt Attempt
 	var attemptID *int64
@@ -55,21 +91,7 @@ func (s Tasks) Get(ctx context.Context, id int64) (Task, error) {
 	var output *string
 	var blocked *bool
 	var artifacts *string
-	err := s.DB.QueryRowContext(ctx, `
-		SELECT t.id, t.goal,
-			CASE
-				WHEN a.blocked THEN 'blocked'
-				WHEN a.completed_at IS NOT NULL THEN 'completed'
-				WHEN a.lease_expires_at > statement_timestamp() THEN 'claimed'
-				WHEN a.attempt_number = $2 THEN 'exhausted'
-				ELSE 'queued'
-			END,
-			a.id, a.attempt_number, a.lease_expires_at, a.completed_at, a.exit_code, a.output, a.blocked, a.artifacts
-		FROM tasks t LEFT JOIN LATERAL (
-			SELECT id, attempt_number, lease_expires_at, completed_at, exit_code, output, blocked, artifacts
-			FROM attempts WHERE task_id = t.id ORDER BY attempt_number DESC LIMIT 1
-		) a ON true
-		WHERE t.id = $1`, id, maxAttempts).Scan(
+	err := row.Scan(
 		&task.ID, &task.Goal, &task.Status, &attemptID, &number, &leaseExpiresAt,
 		&attempt.CompletedAt, &exitCode, &output, &blocked, &artifacts)
 	if err == nil && attemptID != nil {
