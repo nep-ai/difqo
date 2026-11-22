@@ -14,6 +14,8 @@ Difqo is a local-first project for coordinating coding agents, built for solo de
 
 The first milestone is this loop on one local repository. Explore the [local-first architecture concept](https://difqo.com/#architecture) or see [how the workflow handles an outdated decision](https://difqo.com/usecase/correct-a-stale-decision).
 
+The initial local task flow is available for development. See the [local setup guide](docs/development.md), [architecture](docs/architecture.md), and [architecture decisions](docs/adr/).
+
 ## Get involved
 
 - [Share a workflow](https://github.com/nep-ai/difqo/issues/new?template=workflow.yml) you’d like to delegate or [report a problem](https://github.com/nep-ai/difqo/issues/new?template=bug.yml) with the docs or demos.
