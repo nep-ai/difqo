@@ -11,14 +11,16 @@ cp .env.example .env
 set -a
 . ./.env
 set +a
-psql "$DIFQO_DATABASE_URL" -v ON_ERROR_STOP=1 -f migrations/0001_tasks.sql
+psql "$DIFQO_DATABASE_URL" -v ON_ERROR_STOP=1 \
+  -f migrations/0001_tasks.sql -f migrations/0002_attempt_leases.sql
 go build -o bin/difqo ./cmd/difqo
 ./bin/difqo server
 ```
 
-Apply the migration once to a fresh database. With the server running, use a
-second terminal at the repository root. Point the worker at a disposable Git
-checkout with a commit.
+Apply each migration once, in order. To upgrade a database that already has
+0001, stop the server and workers, apply 0002 only, and start the new server.
+With the server running, use a second terminal at the repository root. Point
+the worker at a disposable Git checkout with a commit.
 
 ```sh
 curl -fsS http://127.0.0.1:8765/tasks \
@@ -32,6 +34,12 @@ Use the ID returned by the submit call in place of `1` when needed. The result
 should show exit code `0` and the same revision as
 `git -C /path/to/disposable-checkout rev-parse --verify HEAD`. The worker handles
 one claim and exits. Both commands accept `-port` to select a matching API port.
+
+Each claim starts a 30-second lease. A client can send `POST /attempts/{id}/renew`
+with a JSON body of `{}` to extend an active lease. Expired attempts return
+HTTP 409 for renewals and result submissions. To recover an interrupted run,
+invoke the worker again after the lease expires. After three expired attempts,
+the task read returns `"status": "exhausted"`.
 
 Run the same checks as [Go CI](../.github/workflows/go.yml) before review.
 
@@ -51,10 +59,13 @@ locally, build the binary as above, set `DIFQO_DATABASE_URL` to a fresh disposab
 database, and run:
 
 ```sh
-psql "$DIFQO_DATABASE_URL" -v ON_ERROR_STOP=1 -f migrations/0001_tasks.sql
+psql "$DIFQO_DATABASE_URL" -v ON_ERROR_STOP=1 \
+  -f migrations/0001_tasks.sql -f migrations/0002_attempt_leases.sql
 python3 scripts/postgres-smoke.py bin/difqo
 ```
 
 The script starts and restarts the server, runs a worker against a synthetic Git
-checkout, and checks concurrent claims and result persistence. It leaves the
-test records in the disposable database.
+checkout, and checks concurrent claims, lease renewal, interrupted worker
+recovery, retry exhaustion, and result persistence. It uses `psql` to expire
+fixture leases without waiting and leaves the test records in the disposable
+database.
