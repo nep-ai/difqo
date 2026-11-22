@@ -11,10 +11,11 @@ import (
 	"strings"
 	"time"
 
+	"github.com/nep-ai/difqo/internal/execution"
 	"github.com/nep-ai/difqo/internal/store"
 )
 
-func Run(ctx context.Context, address string, repo string) error {
+func Run(ctx context.Context, address string, repo string, executionOptions *execution.Options) error {
 	client := &http.Client{Timeout: 10 * time.Second}
 	var task store.Task
 	err := request(ctx, client, "POST", address+"/tasks/claim", struct{}{}, &task)
@@ -22,6 +23,51 @@ func Run(ctx context.Context, address string, repo string) error {
 		return err
 	}
 
+	attemptURL := fmt.Sprintf("%s/attempts/%d", address, task.Attempt.ID)
+	var result store.Result
+	if executionOptions == nil {
+		result = checkHead(ctx, repo)
+	} else {
+		runCtx, cancel := context.WithTimeout(ctx, 210*time.Second)
+		defer cancel()
+		heartbeat := make(chan error, 1)
+		go func() {
+			err := renewLease(runCtx, client, attemptURL)
+			heartbeat <- err
+			if err != nil {
+				cancel()
+			}
+		}()
+		result = executionOptions.Run(runCtx, repo, task)
+		if errors.Is(runCtx.Err(), context.DeadlineExceeded) {
+			result.ExitCode = 124
+			result.Output = "Codex execution exceeded the host deadline"
+			result.Blocked = false
+		}
+		cancel()
+		if err := <-heartbeat; err != nil {
+			return err
+		}
+	}
+	return request(ctx, client, "PUT", attemptURL+"/result", result, nil)
+}
+
+func renewLease(ctx context.Context, client *http.Client, attemptURL string) error {
+	ticker := time.NewTicker(8 * time.Second)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return nil
+		case <-ticker.C:
+			if err := request(ctx, client, "POST", attemptURL+"/renew", struct{}{}, nil); err != nil && ctx.Err() == nil {
+				return err
+			}
+		}
+	}
+}
+
+func checkHead(ctx context.Context, repo string) store.Result {
 	checkCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 	output, err := exec.CommandContext(checkCtx, "git", "-C", repo, "rev-parse", "--verify", "HEAD").Output()
@@ -33,7 +79,7 @@ func Run(ctx context.Context, address string, repo string) error {
 			result.ExitCode = exit.ExitCode()
 		}
 	}
-	return request(ctx, client, "PUT", fmt.Sprintf("%s/attempts/%d/result", address, task.Attempt.ID), result, nil)
+	return result
 }
 
 func request(ctx context.Context, client *http.Client, method, url string, body, dst any) error {

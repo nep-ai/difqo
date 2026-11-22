@@ -12,13 +12,14 @@ set -a
 . ./.env
 set +a
 psql "$DIFQO_DATABASE_URL" -v ON_ERROR_STOP=1 \
-  -f migrations/0001_tasks.sql -f migrations/0002_attempt_leases.sql
+  -f migrations/0001_tasks.sql -f migrations/0002_attempt_leases.sql \
+  -f migrations/0003_execution_evidence.sql
 go build -o bin/difqo ./cmd/difqo
 ./bin/difqo server
 ```
 
-Apply each migration once, in order. To upgrade a database that already has
-0001, stop the server and workers, apply 0002 only, and start the new server.
+Apply each migration once, in order. To upgrade an existing database, stop the
+server and workers, apply the migrations it is missing, and start the new server.
 With the server running, use a second terminal at the repository root. Point
 the worker at a disposable Git checkout with a commit.
 
@@ -52,6 +53,53 @@ go build -o bin/difqo ./cmd/difqo
 
 The [architecture document](architecture.md) describes the current limitations.
 
+## Bounded Codex execution
+
+Use a local Docker engine and a trusted synthetic Git checkout with a commit.
+Choose a check command that runs using tools available in the image. The
+operator supplies this command independently of the task goal.
+
+```sh
+docker build -t difqo-codex:0.171.0 containers/codex
+auth_home="$HOME/.local/share/difqo/codex-home"
+artifact_root="$HOME/.local/share/difqo/artifacts"
+mkdir -p "$auth_home"
+chmod 700 "$auth_home"
+docker run --rm -it --user "$(id -u):$(id -g)" \
+  --env HOME=/tmp --env CODEX_HOME=/codex-home \
+  --mount "type=bind,src=$auth_home,dst=/codex-home" \
+  difqo-codex:0.171.0 codex login -c 'cli_auth_credentials_store="file"' --device-auth
+```
+
+Use a dedicated Codex home with its own ChatGPT sign-in. Configure the Docker
+engine to share the artifact root and that home with its Linux runtime when
+needed. The worker starts the App Server with a workspace-only permissions
+profile that denies tool access to the sign-in directory. The runtime must
+support the Linux sandbox used by the pinned Codex release.
+[Codex permissions](https://learn.chatgpt.com/docs/permissions).
+
+With the server running, submit a bounded goal and start one worker:
+
+```sh
+curl -fsS http://127.0.0.1:8765/tasks \
+  -H 'Content-Type: application/json' \
+  -d '{"goal":"Replace the contents of greeting.txt with the line after"}'
+./bin/difqo worker -repo /path/to/disposable-checkout \
+  -codex-image difqo-codex:0.171.0 -codex-home "$auth_home" \
+  -artifacts "$artifact_root" -check 'test "$(cat greeting.txt)" = after'
+curl -fsS http://127.0.0.1:8765/tasks/1
+```
+
+Use the ID from the submit response. Read `change.diff` and `check.log` under
+`$artifact_root/<attempt.result.artifacts>` after the worker exits. The patch
+compares the Codex edit with the initial commit and includes new files. The
+source repository remains available for review. The check runs in a separate
+container without network access or the Codex home mount. A missing or rejected
+sign-in produces `"status": "blocked"`. Sign in and submit a new task to retry.
+The worker allows up to three and a half minutes for the full host-side
+execution. App Server startup and turn failures can include a private
+`execution.log` with a fixed diagnostic selected from the error category.
+
 ## PostgreSQL smoke test
 
 CI runs the smoke test with a disposable PostgreSQL service. To reproduce it
@@ -60,7 +108,8 @@ database, and run:
 
 ```sh
 psql "$DIFQO_DATABASE_URL" -v ON_ERROR_STOP=1 \
-  -f migrations/0001_tasks.sql -f migrations/0002_attempt_leases.sql
+  -f migrations/0001_tasks.sql -f migrations/0002_attempt_leases.sql \
+  -f migrations/0003_execution_evidence.sql
 python3 scripts/postgres-smoke.py bin/difqo
 ```
 
@@ -69,3 +118,13 @@ checkout, and checks concurrent claims, lease renewal, interrupted worker
 recovery, retry exhaustion, and result persistence. It uses `psql` to expire
 fixture leases without waiting and leaves the test records in the disposable
 database.
+
+To include the Docker checks, build the Codex image above and the synthetic App
+Server image below, then set `DIFQO_SMOKE_CODEX=1` when running the smoke script
+against a fresh migrated database. These checks use the real App Server to
+verify missing sign-in and a synthetic JSON-RPC turn to verify patch capture.
+
+```sh
+docker build -t difqo-codex-smoke -f scripts/fixtures/Dockerfile.codex-smoke scripts/fixtures
+DIFQO_SMOKE_CODEX=1 python3 scripts/postgres-smoke.py bin/difqo
+```

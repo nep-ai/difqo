@@ -28,8 +28,10 @@ type Attempt struct {
 }
 
 type Result struct {
-	ExitCode int    `json:"exit_code"`
-	Output   string `json:"output"`
+	ExitCode  int    `json:"exit_code"`
+	Output    string `json:"output"`
+	Blocked   bool   `json:"blocked,omitempty"`
+	Artifacts string `json:"artifacts,omitempty"`
 }
 
 type Tasks struct {
@@ -51,28 +53,31 @@ func (s Tasks) Get(ctx context.Context, id int64) (Task, error) {
 	var leaseExpiresAt *time.Time
 	var exitCode *int
 	var output *string
+	var blocked *bool
+	var artifacts *string
 	err := s.DB.QueryRowContext(ctx, `
 		SELECT t.id, t.goal,
 			CASE
+				WHEN a.blocked THEN 'blocked'
 				WHEN a.completed_at IS NOT NULL THEN 'completed'
 				WHEN a.lease_expires_at > statement_timestamp() THEN 'claimed'
 				WHEN a.attempt_number = $2 THEN 'exhausted'
 				ELSE 'queued'
 			END,
-			a.id, a.attempt_number, a.lease_expires_at, a.completed_at, a.exit_code, a.output
+			a.id, a.attempt_number, a.lease_expires_at, a.completed_at, a.exit_code, a.output, a.blocked, a.artifacts
 		FROM tasks t LEFT JOIN LATERAL (
-			SELECT id, attempt_number, lease_expires_at, completed_at, exit_code, output
+			SELECT id, attempt_number, lease_expires_at, completed_at, exit_code, output, blocked, artifacts
 			FROM attempts WHERE task_id = t.id ORDER BY attempt_number DESC LIMIT 1
 		) a ON true
 		WHERE t.id = $1`, id, maxAttempts).Scan(
 		&task.ID, &task.Goal, &task.Status, &attemptID, &number, &leaseExpiresAt,
-		&attempt.CompletedAt, &exitCode, &output)
+		&attempt.CompletedAt, &exitCode, &output, &blocked, &artifacts)
 	if err == nil && attemptID != nil {
 		attempt.ID = *attemptID
 		attempt.Number = *number
 		attempt.LeaseExpiresAt = *leaseExpiresAt
 		if attempt.CompletedAt != nil {
-			attempt.Result = &Result{ExitCode: *exitCode, Output: *output}
+			attempt.Result = &Result{ExitCode: *exitCode, Output: *output, Blocked: *blocked, Artifacts: *artifacts}
 		}
 		task.Attempt = &attempt
 	}
@@ -164,17 +169,17 @@ func (s Tasks) Complete(ctx context.Context, id int64, result Result) error {
 	var matched *bool
 	err := s.DB.QueryRowContext(ctx, `
 		WITH target AS MATERIALIZED (
-			SELECT id, completed_at, exit_code, output, lease_expires_at
+			SELECT id, completed_at, exit_code, output, blocked, artifacts, lease_expires_at
 			FROM attempts WHERE id = $1 FOR UPDATE
 		), completed AS (
-			UPDATE attempts a SET completed_at = clock_timestamp(), exit_code = $2, output = $3
+			UPDATE attempts a SET completed_at = clock_timestamp(), exit_code = $2, output = $3, blocked = $4, artifacts = $5
 			FROM target t
 			WHERE a.id = t.id AND t.completed_at IS NULL AND t.lease_expires_at > clock_timestamp()
 			RETURNING a.id
 		)
-		SELECT CASE WHEN t.completed_at IS NOT NULL THEN t.exit_code = $2 AND t.output = $3
+		SELECT CASE WHEN t.completed_at IS NOT NULL THEN t.exit_code = $2 AND t.output = $3 AND t.blocked = $4 AND t.artifacts = $5
 			WHEN c.id IS NOT NULL THEN true END
-		FROM target t LEFT JOIN completed c USING (id)`, id, result.ExitCode, result.Output).Scan(&matched)
+		FROM target t LEFT JOIN completed c USING (id)`, id, result.ExitCode, result.Output, result.Blocked, result.Artifacts).Scan(&matched)
 	if err != nil {
 		return err
 	}

@@ -168,6 +168,48 @@ with TemporaryDirectory(prefix='difqo-smoke-') as scratch:
         assert api(interrupted_path)[1] == recovered
         assert api(abandoned_path)[1] == exhausted
         print('Local smoke passed: fixed checks, exclusive claims, renewable leases, interrupted worker recovery, stale results, retry exhaustion, and restart persistence')
+
+        if os.environ.get('DIFQO_SMOKE_CODEX') == '1':
+            auth_home = Path(scratch) / 'codex-home'
+            auth_home.mkdir(mode=0o700)
+            artifacts = Path(scratch) / 'artifacts'
+            greeting = fixture / 'greeting.txt'
+            greeting.write_text('before\n')
+            run('git', '-C', fixture, 'add', 'greeting.txt')
+            run('git', '-C', fixture, '-c', 'user.name=Difqo Smoke',
+                '-c', 'user.email=smoke@example.invalid', '-c', 'commit.gpgSign=false',
+                'commit', '-qm', 'Add fixture greeting')
+
+            def run_codex(image):
+                status, submitted = api('/tasks', 'POST', {'goal': 'Replace the fixture greeting'})
+                assert status == 201
+                run(binary, 'worker', '-port', port, '-repo', fixture,
+                    '-codex-image', image, '-codex-home', auth_home, '-artifacts', artifacts,
+                    '-check', 'test "$(cat greeting.txt)" = after && printf "greeting check passed\\n"')
+                status, task = api(f"/tasks/{submitted['id']}")
+                assert status == 200
+                return task
+
+            blocked = run_codex('difqo-codex:0.171.0')
+            assert blocked['status'] == 'blocked', blocked
+            assert blocked['attempt']['result'] == {
+                'exit_code': 125, 'output': 'Codex sign-in required', 'blocked': True,
+            }
+            assert list(artifacts.iterdir()) == []
+
+            executed = run_codex('difqo-codex-smoke')
+            assert executed['status'] == 'completed'
+            outcome = executed['attempt']['result']
+            assert outcome['exit_code'] == 0, outcome
+            artifact_ref = outcome['artifacts']
+            assert not run('docker', 'ps', '-a', '--filter', f'name=difqo-{artifact_ref}', '-q').strip()
+            evidence = artifacts / artifact_ref
+            patch = (evidence / 'change.diff').read_text()
+            assert '-before\n+after\n' in patch and '+new file\n' in patch
+            assert (evidence / 'check.log').read_text() == 'greeting check passed\n'
+            assert greeting.read_text() == 'before\n' and not (fixture / 'untracked.txt').exists()
+            assert not (evidence / 'workspace').exists()
+            print('Docker smoke passed: real Codex sign-in block, synthetic turn, and evidence after container removal')
     finally:
         server.terminate()
         server.wait(timeout=5)
