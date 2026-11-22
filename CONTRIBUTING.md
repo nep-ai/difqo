@@ -20,3 +20,5 @@ Use sanitized examples in public issues and pull requests. Follow the [code of c
 By submitting a contribution, you agree to license it under the project’s [Apache License 2.0](LICENSE). Submit work you have the right to share.
 
 See [how maintainers triage, review, and release changes](MAINTAINING.md).
+
+If you use a coding agent, see [the repository's lifecycle skills](AGENTS.md#lifecycle-skills).
