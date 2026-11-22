@@ -65,7 +65,10 @@ auth_home="$HOME/.local/share/difqo/codex-home"
 artifact_root="$HOME/.local/share/difqo/artifacts"
 mkdir -p "$auth_home"
 chmod 700 "$auth_home"
-CODEX_HOME="$auth_home" codex login -c 'cli_auth_credentials_store="file"' --device-auth
+docker run --rm -it --user "$(id -u):$(id -g)" \
+  --env HOME=/tmp --env CODEX_HOME=/codex-home \
+  --mount "type=bind,src=$auth_home,dst=/codex-home" \
+  difqo-codex:0.171.0 codex login -c 'cli_auth_credentials_store="file"' --device-auth
 ```
 
 Use a dedicated Codex home with its own ChatGPT sign-in. Configure the Docker
