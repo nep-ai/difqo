@@ -1,0 +1,26 @@
+name: Share a workflow
+description: Tell us about engineering work you want to delegate and how you would review it.
+labels: [enhancement]
+body:
+  - type: markdown
+    attributes:
+      value: This issue is public. Use a sanitized example without private project details.
+  - type: textarea
+    id: task
+    attributes:
+      label: What work would you delegate?
+      description: Describe the task, who does it today, and where time or project context gets lost.
+    validations:
+      required: true
+  - type: textarea
+    id: review
+    attributes:
+      label: What would you need to see before accepting the result?
+      description: Share a decision the agent should follow or a check that would make the result reviewable.
+    validations:
+      required: true
+  - type: textarea
+    id: related
+    attributes:
+      label: Related issues or workflows
+      description: Link to any examples or earlier discussions that add context.
