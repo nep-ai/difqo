@@ -1,9 +1,11 @@
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import closing
+from datetime import datetime
 from pathlib import Path
 from tempfile import TemporaryDirectory
 import json
 import os
+import signal
 import socket
 import subprocess
 import sys
@@ -62,6 +64,12 @@ with TemporaryDirectory(prefix='difqo-smoke-') as scratch:
         server.wait(timeout=5)
         raise RuntimeError('Server readiness timed out')
 
+    def expire(attempt):
+        # Advance this fixture past its deadline without waiting on wall time.
+        run('psql', '-X', os.environ['DIFQO_DATABASE_URL'], '-v', 'ON_ERROR_STOP=1',
+            '-c', 'UPDATE attempts SET lease_expires_at = clock_timestamp() '
+            f"WHERE id = {int(attempt['id'])}")
+
     server = start()
     try:
         assert api('/tasks', 'POST', {'goal': '  '})[0] == 400
@@ -88,11 +96,74 @@ with TemporaryDirectory(prefix='difqo-smoke-') as scratch:
         run(binary, 'worker', '-port', port, '-repo', fixture / 'missing')
         assert api(f"/tasks/{failed['id']}")[1]['attempt']['result']['exit_code'] != 0
 
+        status, interrupted = api('/tasks', 'POST', {'goal': 'Recover an interrupted worker'})
+        assert status == 201
+        interrupted_path = f"/tasks/{interrupted['id']}"
+        slow_git = Path(scratch) / 'git'
+        slow_git.write_text('#!/bin/sh\nexec sleep 60\n')
+        slow_git.chmod(0o700)
+        worker = subprocess.Popen([binary, 'worker', '-port', port, '-repo', fixture],
+                                  env={**os.environ, 'PATH': f"{scratch}{os.pathsep}{os.environ['PATH']}"},
+                                  start_new_session=True)
+        try:
+            for _ in range(100):
+                status, claimed = api(interrupted_path)
+                if status == 200 and claimed['status'] == 'claimed':
+                    break
+                assert worker.poll() is None, 'Worker exited before claiming'
+                time.sleep(0.02)
+            else:
+                raise AssertionError('Worker did not claim the task')
+        finally:
+            if worker.poll() is None:
+                os.killpg(worker.pid, signal.SIGKILL)
+            worker.wait(timeout=5)
+
+        original = claimed['attempt']
+        original_path = f"/attempts/{original['id']}"
+        assert original['number'] == 1
+        assert api('/tasks/claim', 'POST', {})[0] == 204
+        assert api(original_path + '/renew', 'POST', {})[0] == 204
+        renewed = api(interrupted_path)[1]['attempt']
+        assert datetime.fromisoformat(renewed['lease_expires_at']) > datetime.fromisoformat(original['lease_expires_at'])
+        expire(renewed)
+        assert api(interrupted_path)[1]['status'] == 'queued'
+        assert api(original_path + '/renew', 'POST', {})[0] == 409
+        assert api(original_path + '/result', 'PUT', result)[0] == 409
+
+        with ThreadPoolExecutor(max_workers=12) as clients:
+            reclaims = list(clients.map(lambda _: api('/tasks/claim', 'POST', {}), range(12)))
+        assert sorted(status for status, _ in reclaims) == [200] + [204] * 11, reclaims
+        reclaimed = next(task for status, task in reclaims if status == 200)
+        replacement = reclaimed['attempt']
+        assert reclaimed['id'] == interrupted['id']
+        assert replacement['number'] == 2 and replacement['id'] != original['id']
+        replacement_path = f"/attempts/{replacement['id']}"
+        assert api(original_path + '/result', 'PUT', result)[0] == 409
+        assert api(replacement_path + '/result', 'PUT', result)[0] == 204
+        assert api(original_path + '/result', 'PUT', result)[0] == 409
+        recovered = api(interrupted_path)[1]
+        assert recovered['status'] == 'completed' and recovered['attempt']['result'] == result
+
+        status, abandoned = api('/tasks', 'POST', {'goal': 'Exhaust the retry budget'})
+        assert status == 201
+        for number in (1, 2, 3):
+            status, attempt_task = api('/tasks/claim', 'POST', {})
+            assert status == 200 and attempt_task['id'] == abandoned['id']
+            assert attempt_task['attempt']['number'] == number
+            expire(attempt_task['attempt'])
+        abandoned_path = f"/tasks/{abandoned['id']}"
+        exhausted = api(abandoned_path)[1]
+        assert exhausted['status'] == 'exhausted' and 'result' not in exhausted['attempt']
+        assert api('/tasks/claim', 'POST', {})[0] == 204
+
         server.terminate()
         server.wait(timeout=5)
         server = start()
         assert api(f"/tasks/{task['id']}")[1] == completed
-        print('Local smoke passed: successful and failed checks, duplicate result handling, exclusive concurrent claim, and persistence across server restart')
+        assert api(interrupted_path)[1] == recovered
+        assert api(abandoned_path)[1] == exhausted
+        print('Local smoke passed: fixed checks, exclusive claims, renewable leases, interrupted worker recovery, stale results, retry exhaustion, and restart persistence')
     finally:
         server.terminate()
         server.wait(timeout=5)

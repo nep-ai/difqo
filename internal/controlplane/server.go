@@ -67,6 +67,18 @@ func Handler(tasks store.Tasks) http.Handler {
 		writeJSON(w, http.StatusOK, task)
 	})
 
+	router.HandleFunc("POST /attempts/{id}/renew", func(w http.ResponseWriter, r *http.Request) {
+		id, ok := readID(w, r)
+		if !ok || !decode(w, r, &struct{}{}) {
+			return
+		}
+		if err := tasks.Renew(r.Context(), id); err != nil {
+			storeError(w, err)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+	})
+
 	router.HandleFunc("PUT /attempts/{id}/result", func(w http.ResponseWriter, r *http.Request) {
 		id, ok := readID(w, r)
 		if !ok {
@@ -130,7 +142,7 @@ func storeError(w http.ResponseWriter, err error) {
 	switch {
 	case errors.Is(err, sql.ErrNoRows):
 		http.Error(w, "record not found", http.StatusNotFound)
-	case errors.Is(err, store.ErrConflictingResult):
+	case errors.Is(err, store.ErrConflictingResult), errors.Is(err, store.ErrInactiveLease):
 		http.Error(w, err.Error(), http.StatusConflict)
 	default:
 		log.Printf("store request failed (%T)", err)

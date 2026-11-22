@@ -53,5 +53,6 @@ jobs:
           POSTGRES_PORT: ${{ job.services.postgres.ports['5432'] }}
         run: |
           docker exec -i "$POSTGRES_CONTAINER" psql -U postgres -d difqo_smoke -v ON_ERROR_STOP=1 < migrations/0001_tasks.sql
+          docker exec -i "$POSTGRES_CONTAINER" psql -U postgres -d difqo_smoke -v ON_ERROR_STOP=1 < migrations/0002_attempt_leases.sql
           DIFQO_DATABASE_URL="postgres://postgres:smoke-test@127.0.0.1:${POSTGRES_PORT}/difqo_smoke?sslmode=disable" \
             python3 scripts/postgres-smoke.py bin/difqo
