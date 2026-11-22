@@ -31,6 +31,8 @@ with TemporaryDirectory(prefix='difqo-smoke-') as scratch:
         '-c', 'user.email=smoke@example.invalid', '-c', 'commit.gpgSign=false',
         'commit', '--allow-empty', '-qm', 'Synthetic fixture')
     expected = run('git', '-C', fixture, 'rev-parse', '--verify', 'HEAD').strip()
+    artifacts = Path(scratch) / 'artifacts'
+    artifacts.mkdir(mode=0o700)
 
     with closing(socket.socket()) as reserved:
         reserved.bind(('127.0.0.1', 0))
@@ -51,7 +53,7 @@ with TemporaryDirectory(prefix='difqo-smoke-') as scratch:
             return error.code, None
 
     def start():
-        server = subprocess.Popen([binary, 'server', '-port', port])
+        server = subprocess.Popen([binary, 'server', '-port', port, '-artifacts', artifacts])
         for _ in range(300):
             try:
                 if api('/tasks/1')[0] in (200, 404):
@@ -72,7 +74,11 @@ with TemporaryDirectory(prefix='difqo-smoke-') as scratch:
 
     server = start()
     try:
+        assert api('/tasks') == (200, [])
         assert api('/tasks', 'POST', {'goal': '  '})[0] == 400
+        assert api('/tasks', 'POST', {'goal': 'Reject cross-origin dispatch'}, headers={
+            'Content-Type': 'application/json', 'Sec-Fetch-Site': 'cross-site',
+        })[0] == 403
         assert api('/tasks/1', headers={'Host': 'untrusted.invalid'})[0] == 400
         status, task = api('/tasks', 'POST', {'goal': 'Record fixture revision'})
         assert status == 201 and 'attempt' not in task
@@ -81,6 +87,8 @@ with TemporaryDirectory(prefix='difqo-smoke-') as scratch:
         assert status == 200
         result = {'exit_code': 0, 'output': expected}
         assert completed['attempt']['result'] == result
+        assert api('/tasks') == (200, [completed])
+        assert api(f"/tasks/{task['id']}/evidence/change.diff")[0] == 404
         path = f"/attempts/{completed['attempt']['id']}/result"
         assert api(path, 'PUT', result)[0] == 204
         assert api(path, 'PUT', {'exit_code': 1, 'output': 'conflict'})[0] == 409
@@ -172,7 +180,6 @@ with TemporaryDirectory(prefix='difqo-smoke-') as scratch:
         if os.environ.get('DIFQO_SMOKE_CODEX') == '1':
             auth_home = Path(scratch) / 'codex-home'
             auth_home.mkdir(mode=0o700)
-            artifacts = Path(scratch) / 'artifacts'
             greeting = fixture / 'greeting.txt'
             greeting.write_text('before\n')
             run('git', '-C', fixture, 'add', 'greeting.txt')
@@ -207,6 +214,11 @@ with TemporaryDirectory(prefix='difqo-smoke-') as scratch:
             patch = (evidence / 'change.diff').read_text()
             assert '-before\n+after\n' in patch and '+new file\n' in patch
             assert (evidence / 'check.log').read_text() == 'greeting check passed\n'
+            evidence_url = f"http://127.0.0.1:{port}/tasks/{executed['id']}/evidence/"
+            with urllib.request.urlopen(evidence_url + 'change.diff', timeout=2) as response:
+                assert response.read().decode() == patch
+                assert response.headers.get_content_type() == 'text/plain'
+            assert api(f"/tasks/{executed['id']}/evidence/auth.json")[0] == 404
             assert greeting.read_text() == 'before\n' and not (fixture / 'untracked.txt').exists()
             assert not (evidence / 'workspace').exists()
             print('Docker smoke passed: real Codex sign-in block, synthetic turn, and evidence after container removal')

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io/fs"
 	"log"
 	"net/http"
 	"os"
@@ -35,9 +36,12 @@ func run(args []string) error {
 	flags := flag.NewFlagSet(args[0], flag.ContinueOnError)
 	port := flags.Int("port", 8765, "loopback API port")
 	var repo *string
+	var webPath, artifactPath string
 	var options execution.Options
 	switch args[0] {
 	case "server":
+		flags.StringVar(&webPath, "web", "", "path to the built local web UI")
+		flags.StringVar(&artifactPath, "artifacts", "", "absolute path to the worker artifact directory")
 	case "worker":
 		repo = flags.String("repo", "", "path to a local Git checkout")
 		flags.StringVar(&options.Image, "codex-image", "", "local Docker image for Codex execution")
@@ -94,7 +98,25 @@ func run(args []string) error {
 		return fmt.Errorf("could not connect to PostgreSQL (%T)", err)
 	}
 
-	handler := controlplane.Handler(store.Tasks{DB: db})
+	var web fs.FS
+	if webPath != "" {
+		web = os.DirFS(webPath)
+		if info, err := fs.Stat(web, "index.html"); err != nil || !info.Mode().IsRegular() {
+			return errors.New("server -web must point to the built frontend directory")
+		}
+	}
+	var artifacts *os.Root
+	if artifactPath != "" {
+		if !filepath.IsAbs(artifactPath) {
+			return errors.New("server -artifacts requires an absolute path")
+		}
+		artifacts, err = os.OpenRoot(artifactPath)
+		if err != nil {
+			return errors.New("could not open the worker artifact directory")
+		}
+		defer artifacts.Close()
+	}
+	handler := http.NewCrossOriginProtection().Handler(controlplane.Handler(store.Tasks{DB: db}, web, artifacts))
 	server := &http.Server{
 		Addr: address,
 		Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

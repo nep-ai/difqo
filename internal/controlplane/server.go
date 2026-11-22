@@ -5,9 +5,12 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"io/fs"
 	"log"
 	"mime"
 	"net/http"
+	"os"
+	"path"
 	"regexp"
 	"strconv"
 	"strings"
@@ -18,8 +21,76 @@ import (
 
 var artifactSuffix = regexp.MustCompile(`^[0-9]+$`)
 
-func Handler(tasks store.Tasks) http.Handler {
+func Handler(tasks store.Tasks, web fs.FS, artifacts *os.Root) http.Handler {
 	router := http.NewServeMux()
+
+	if web != nil {
+		router.HandleFunc("GET /{$}", func(w http.ResponseWriter, r *http.Request) {
+			http.ServeFileFS(w, r, web, "index.html")
+		})
+		router.HandleFunc("GET /favicon.svg", func(w http.ResponseWriter, r *http.Request) {
+			http.ServeFileFS(w, r, web, "favicon.svg")
+		})
+		for _, directory := range []string{"assets", "licenses"} {
+			router.HandleFunc("GET /"+directory+"/{file}", func(w http.ResponseWriter, r *http.Request) {
+				filename := r.PathValue("file")
+				if filename == "." || filename == ".." || strings.ContainsAny(filename, "/\\") {
+					http.NotFound(w, r)
+					return
+				}
+				http.ServeFileFS(w, r, web, directory+"/"+filename)
+			})
+		}
+	}
+	router.HandleFunc("GET /tasks", func(w http.ResponseWriter, r *http.Request) {
+		recent, err := tasks.Recent(r.Context())
+		if err != nil {
+			storeError(w, err)
+			return
+		}
+		w.Header().Set("Cache-Control", "no-store")
+		writeJSON(w, http.StatusOK, recent)
+	})
+	if artifacts != nil {
+		router.HandleFunc("GET /tasks/{id}/evidence/{file}", func(w http.ResponseWriter, r *http.Request) {
+			id, ok := readID(w, r)
+			if !ok {
+				return
+			}
+			filename := r.PathValue("file")
+			switch filename {
+			case "change.diff", "check.log", "execution.log":
+			default:
+				http.NotFound(w, r)
+				return
+			}
+			task, err := tasks.Get(r.Context(), id)
+			if err != nil {
+				storeError(w, err)
+				return
+			}
+			if task.Attempt == nil || task.Attempt.Result == nil ||
+				!validArtifactRef(task.Attempt.ID, task.Attempt.Result.Artifacts) {
+				http.NotFound(w, r)
+				return
+			}
+			f, err := artifacts.Open(path.Join(task.Attempt.Result.Artifacts, filename))
+			if err != nil {
+				http.NotFound(w, r)
+				return
+			}
+			defer f.Close()
+			info, err := f.Stat()
+			if err != nil || !info.Mode().IsRegular() || info.Size() > 4<<20 {
+				http.NotFound(w, r)
+				return
+			}
+			w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+			w.Header().Set("X-Content-Type-Options", "nosniff")
+			w.Header().Set("Cache-Control", "no-store")
+			http.ServeContent(w, r, filename, info.ModTime(), f)
+		})
+	}
 
 	router.HandleFunc("POST /tasks", func(w http.ResponseWriter, r *http.Request) {
 		var request struct {
@@ -96,11 +167,9 @@ func Handler(tasks store.Tasks) http.Handler {
 		if !decode(w, r, &request) {
 			return
 		}
-		artifactPrefix := "attempt-" + strconv.FormatInt(id, 10) + "-"
-		suffix, hasPrefix := strings.CutPrefix(request.Artifacts, artifactPrefix)
 		if request.ExitCode == nil || *request.ExitCode < 0 || *request.ExitCode > 255 ||
 			request.Output == nil || strings.ContainsRune(*request.Output, 0) ||
-			(request.Artifacts != "" && (len(request.Artifacts) > 64 || !hasPrefix || !artifactSuffix.MatchString(suffix))) ||
+			(request.Artifacts != "" && !validArtifactRef(id, request.Artifacts)) ||
 			(request.Blocked && (*request.ExitCode == 0 || request.Artifacts != "")) {
 			http.Error(w, "invalid result", http.StatusBadRequest)
 			return
@@ -115,6 +184,12 @@ func Handler(tasks store.Tasks) http.Handler {
 		w.WriteHeader(http.StatusNoContent)
 	})
 	return router
+}
+
+func validArtifactRef(id int64, reference string) bool {
+	prefix := "attempt-" + strconv.FormatInt(id, 10) + "-"
+	suffix, matches := strings.CutPrefix(reference, prefix)
+	return len(reference) <= 64 && matches && artifactSuffix.MatchString(suffix)
 }
 
 func readID(w http.ResponseWriter, r *http.Request) (int64, bool) {
