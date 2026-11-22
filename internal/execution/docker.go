@@ -23,6 +23,8 @@ func (c container) command(ctx context.Context, authHome string, args ...string)
 		"--read-only", "--tmpfs=/tmp:rw,exec,mode=1777,size=256m",
 		"--memory=2g", "--cpus=2", "--user", fmt.Sprintf("%d:%d", os.Getuid(), os.Getgid()),
 		"--workdir=/workspace", "--env=HOME=/tmp",
+		// VM-backed bind mounts can report an owner different from the process UID.
+		"--env=GIT_CONFIG_COUNT=1", "--env=GIT_CONFIG_KEY_0=safe.directory", "--env=GIT_CONFIG_VALUE_0=/workspace",
 		"--mount", "type=bind,src=" + c.workspace + ",dst=/workspace",
 	}
 	if authHome == "" {
