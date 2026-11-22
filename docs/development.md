@@ -147,7 +147,8 @@ GitHub or draft a specialist. The **Local service** menu can reset the demo.
 The demo uses browser-local state. Installation, readiness, execution,
 connections, and approvals are simulated. The terminal shows proposed CLI
 commands. The frontend requires no database, provider credentials, or worker.
-Use the backend workflow above for real task execution.
+Use the backend workflow above for real task execution. The frontend follows
+the [Difqo brand guidelines](brand.md) and serves its fonts locally.
 
 Build the frontend with:
 

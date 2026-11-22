@@ -4,10 +4,13 @@ import {
   answer, baseRevision, checkCommand, freshDemo, loadDemo, patch, patchRevision,
   readiness, sampleGoal, saveDemo,
 } from './demo.js'
+import '@fontsource-variable/geist/wght.css'
+import '@fontsource/barlow-condensed/latin-600.css'
+import favicon from '/favicon.svg?url'
 import './style.css'
 
 function Mark() {
-  return <span className="mark" aria-hidden="true">D</span>
+  return <img className="mark" src={favicon} alt="" />
 }
 
 function Installation({ onInstall }) {
@@ -67,32 +70,40 @@ function GoalCard({ goal, run, stop, verify, accept }) {
   const { id, title, status, sample, check } = goal
   const reviewing = sample && ['Ready for review', 'Accepted', 'Changes requested'].includes(status)
   return <section className="attachment" aria-label={'Work on ' + title}>
+    <div className="project-file-meta"><span>Project file</span><span>{sample ? 'orchard/reports · sample repository' : 'Sample workspace'}</span></div>
     <div className="attachment-title"><h2>{title}</h2><span className={'badge ' + (status === 'Accepted' ? 'good' : '')}>{status}</span></div>
     {status === 'Proposed' && <>
       <p>{sample ? 'Verify that one workspace cannot export another workspace’s rows in the sample repository.' : 'For a real run, I’d confirm the repository, inspect its saved decisions, and propose how to verify the outcome.'}</p>
       <details><summary>Scope and permissions</summary><p>Read repository files and make changes in an isolated checkout. Ask before posting externally.</p></details>
-      <button className="primary" onClick={() => run(id)}>Start {sample ? 'sample goal' : 'simulation'}</button>
+      <button className="primary" onClick={() => run(id)}>Start run</button>
     </>}
     {status === 'Running' && <>
       <p role="status">The goal is saved. The Chief of Staff is coordinating the work and checking the result.</p>
       <div className="actions">
-        <button onClick={() => stop(id, 'Paused')}>Pause</button><button onClick={() => stop(id, 'Cancelled')}>Cancel</button>
+        <button onClick={() => stop(id, 'Paused')}>Pause run</button><button onClick={() => stop(id, 'Cancelled')}>Cancel run</button>
       </div>
     </>}
-    {status === 'Paused' && <div className="actions"><button className="primary" onClick={() => run(id)}>Resume</button><button onClick={() => stop(id, 'Cancelled')}>Cancel</button></div>}
+    {status === 'Paused' && <div className="actions"><button className="primary" onClick={() => run(id)}>Resume run</button><button onClick={() => stop(id, 'Cancelled')}>Cancel run</button></div>}
     {status === 'Completed' && <p>Simulation complete. A real run would show evidence specific to this goal.</p>}
     {reviewing && <>
-      <p>The export was scoped to the requesting workspace. The sample check used records from two workspaces.</p>
-      <dl className="facts"><dt>Saved decision</dt><dd>Workspace isolation</dd><dt>Original base</dt><dd><code>{baseRevision}</code></dd><dt>Patch</dt><dd><code>{patchRevision}</code></dd><dt>Check</dt><dd><span className={'badge ' + (check === 'Passed' ? 'good' : '')}>{check}</span></dd></dl>
-      <details><summary>View patch</summary><pre className="output" tabIndex={0}>{patch.split('\n').map((line, index) => <span key={index} className={line.startsWith('+') ? 'addition' : line.startsWith('-') ? 'deletion' : ''}>{line}{'\n'}</span>)}</pre></details>
-      <details><summary>View check output</summary><pre className="output" tabIndex={0}>{'$ ' + checkCommand + '\n' + (check === 'Passed' ? 'PASS · TestExportWorkspaceIsolation' : check === 'Checking' ? 'Reconstructing the original base and patch…' : 'A check is needed for this exact patch.')}</pre></details>
-      {status === 'Ready for review' && <div className="actions">
-        <button onClick={() => verify(id)} disabled={check === 'Checking'}>Rerun check</button>
-        <button className="primary" onClick={() => accept(id, 'Accepted')} disabled={check !== 'Passed'}>Accept patch</button>
-        <button onClick={() => accept(id, 'Changes requested')}>Request changes</button>
-      </div>}
-      {status === 'Accepted' && <p>Approval recorded for patch <code>{patchRevision}</code> and its passing check.</p>}
-      <button className="subtle" onClick={downloadPatch}>Download patch</button>
+      <p>The patch limits report exports to the requesting workspace. The isolation check uses records from two workspaces.</p>
+      <details className="review"><summary>Review changes</summary>
+        <dl className="facts">
+          <dt>Saved decision</dt><dd>Workspace isolation. Exports include only rows owned by the active workspace.</dd>
+          <dt>Original base</dt><dd><code>{baseRevision}</code></dd>
+          <dt>Patch</dt><dd><code>{patchRevision}</code></dd>
+          <dt>Check</dt><dd><span role="status" className={'badge ' + (check === 'Passed' ? 'good' : 'attention')}>{check === 'Required' ? 'Check out of date' : check}</span></dd>
+        </dl>
+        <details><summary>View patch</summary><pre className="output" tabIndex={0} aria-label="Patch diff">{patch.trimEnd().split('\n').map((line, index) => <span key={index} className={line.startsWith('+') ? 'addition' : line.startsWith('-') ? 'deletion' : ''}>{line}{'\n'}</span>)}</pre></details>
+        <details><summary>View logs</summary><pre className="output" tabIndex={0} aria-label="Check logs">{'$ ' + checkCommand + '\n' + (check === 'Passed' ? 'PASS · TestExportWorkspaceIsolation' : check === 'Checking' ? 'Reconstructing the original base and patch…' : 'Rerun the check on this patch before approving.')}</pre></details>
+        {status === 'Ready for review' && <div className="actions">
+          <button className={check === 'Required' ? 'primary' : ''} onClick={() => verify(id)} disabled={check === 'Checking'}>Rerun check</button>
+          <button className={check === 'Passed' ? 'primary' : ''} onClick={() => accept(id, 'Accepted')} disabled={check !== 'Passed'}>Approve patch</button>
+          <button onClick={() => accept(id, 'Changes requested')}>Request changes</button>
+        </div>}
+        {status === 'Accepted' && <p>Approval recorded for patch <code>{patchRevision}</code> and its passing check.</p>}
+        <button className="subtle download" onClick={downloadPatch}>Download patch</button>
+      </details>
     </>}
   </section>
 }
@@ -104,7 +115,7 @@ function ApprovalCard({ approval, decide }) {
     <div className="attachment-title"><h2>Approve access for {label}?</h2><span className="badge">{status}</span></div>
     <p>{scope}</p>
     {status === 'Pending' && <div className="actions">
-      <button className="primary" onClick={() => decide('Approved')}>Approve in demo</button><button onClick={() => decide('Declined')}>Decline</button>
+      <button className="primary" onClick={() => decide('Approved')}>Approve access</button><button onClick={() => decide('Declined')}>Decline</button>
     </div>}
   </section>
 }
@@ -121,13 +132,25 @@ function Chat({ demo, send, run, stop, verify, accept, decide }) {
     }
   }
 
+  const follow = useRef(true)
+
   useEffect(() => {
-    if (count) end.current?.scrollIntoView({ block: 'nearest' })
+    function trackReadingPosition() {
+      const remaining = document.documentElement.scrollHeight - window.innerHeight - window.scrollY
+      follow.current = remaining < 144
+    }
+    window.addEventListener('scroll', trackReadingPosition, { passive: true })
+    return () => window.removeEventListener('scroll', trackReadingPosition)
+  }, [])
+
+  useEffect(() => {
+    if (count && follow.current) end.current?.scrollIntoView({ block: 'nearest' })
   }, [count])
 
   function submit(text) {
     const trimmed = text.trim()
     if (!trimmed) return
+    follow.current = true
     send(trimmed)
     setDraft('')
     composer.current.focus({ preventScroll: true })
@@ -135,6 +158,7 @@ function Chat({ demo, send, run, stop, verify, accept, decide }) {
 
   return <main className="chat" aria-labelledby="conversation-title">
     <h1 id="conversation-title" className="sr-only">Chief of Staff conversation</h1>
+    <p className="sr-only" role="status">{demo.messages.at(-1)?.role === 'chief' ? demo.messages.at(-1).text : ''}</p>
     {count ? <section className="conversation" aria-label="Conversation">
       {demo.messages.map((message, index) => {
         const hasWorkCard = message.goal && attachments.get(message.goal) === index
@@ -144,7 +168,7 @@ function Chat({ demo, send, run, stop, verify, accept, decide }) {
             {message.role === 'chief' && <strong className="speaker">Chief of Staff</strong>}
             <p>{message.text}</p>
             {hasWorkCard && <div id={'goal-' + message.goal}><GoalCard goal={demo.goals[message.goal]} {...{ run, stop, verify, accept }} /></div>}
-            {message.goal && !hasWorkCard && <a className="conversation-link" href={'#goal-' + message.goal}>View {demo.goals[message.goal].status.toLowerCase()} work</a>}
+            {message.goal && !hasWorkCard && <a className="conversation-link" href={'#goal-' + message.goal}>Open project file</a>}
             {message.approval && <ApprovalCard approval={demo.approvals[message.approval]} decide={status => decide(message.approval, status)} />}
           </div>
         </article>
@@ -193,7 +217,7 @@ function App() {
       return {
         ...current,
         goals: { ...current.goals, [id]: next },
-        messages: reply ? [...current.messages, { role: 'chief', text: reply, goal: id, moveCard: true }] : current.messages,
+        messages: reply ? [...current.messages, { role: 'chief', text: reply, goal: id, moveCard: next.status !== goal.status && !['Accepted', 'Changes requested'].includes(next.status) }] : current.messages,
       }
     })
   }
@@ -256,9 +280,9 @@ function App() {
   }
 
   return <div className="app">
-    <header className="topbar"><div className="brand"><Mark /><span>difqo</span></div>
+    <header className="topbar"><div className="brand"><Mark /><span>difqo<span className="wordmark-period">.</span></span></div>
       <span className="surface-title">{demo.stage === 'chat' ? 'Chief of Staff' : 'Local setup'}</span>
-      <div className="top-actions"><span className="badge">Demo</span><button className="subtle" onClick={() => dialog.current.showModal()}>Local service</button></div>
+      <div className="top-actions"><span className="badge">Workflow demo</span><button className="subtle" onClick={() => dialog.current.showModal()}>Local service</button></div>
     </header>
     {demo.stage === 'install' && <Installation onInstall={() => setDemo(current => ({ ...current, stage: 'readiness' }))} />}
     {demo.stage === 'readiness' && <Readiness blocker={demo.blocker}
