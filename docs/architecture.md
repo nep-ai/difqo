@@ -30,6 +30,14 @@ in a trusted local development environment. PostgreSQL stores the revision check
 output directly. The development workflow and API examples are in the [local
 setup guide](development.md).
 
+## Chief of Staff frontend demo
+
+The React and Vite app in `web/` runs the installation, readiness, and
+conversation flows with synthetic browser-local state. It renders sample
+goals, evidence, and approval requests in the Chief of Staff conversation.
+The control plane and worker diagram above describes the separate, real task
+execution path. See the [frontend development workflow](development.md#chief-of-staff-frontend-demo).
+
 ## MVP target
 
 ```mermaid

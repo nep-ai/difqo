@@ -128,3 +128,29 @@ verify missing sign-in and a synthetic JSON-RPC turn to verify patch capture.
 docker build -t difqo-codex-smoke -f scripts/fixtures/Dockerfile.codex-smoke scripts/fixtures
 DIFQO_SMOKE_CODEX=1 python3 scripts/postgres-smoke.py bin/difqo
 ```
+
+## Chief of Staff frontend demo
+
+Use Node.js 24 and pnpm 10.34.9 from the repository root.
+
+```sh
+corepack pnpm@10.34.9 install --frozen-lockfile
+corepack pnpm@10.34.9 --filter difqo-local-ui dev
+```
+
+Open the loopback URL printed by Vite. The demo starts at local installation,
+checks workspace readiness, and opens one Chief of Staff conversation. Try the
+workspace-safe CSV example, rerun its sample check, and record a decision.
+To preview how a permission request looks, ask the Chief of Staff to connect
+GitHub or draft a specialist. The **Local service** menu can reset the demo.
+
+The demo uses browser-local state. Installation, readiness, execution,
+connections, and approvals are simulated. The terminal shows proposed CLI
+commands. The frontend requires no database, provider credentials, or worker.
+Use the backend workflow above for real task execution.
+
+Build the frontend with:
+
+```sh
+corepack pnpm@10.34.9 --filter difqo-local-ui build
+```
