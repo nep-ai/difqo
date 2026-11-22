@@ -10,3 +10,4 @@ description: Implement Difqo features, fixes, and refactors or diagnose an appli
 - For a bug, build a tight feedback loop that demonstrates the reported behavior through a relevant interface. Use a sanitized fixture, log, or minimal check to isolate the cause. Add a regression test when the fix addresses behavior that existing checks would miss.
 - Run the smallest relevant checks while iterating, then run broader repository checks when the change crosses components. When changing how a patch is produced or reviewed, verify the path from the source decision to the observed patch and check result.
 - Inspect the final diff for unintended changes. Provide the checks run, their results, and any remaining verification gaps so a reviewer can repeat the important checks.
+- After opening a focused PR, follow the [delivery skill](../difqo-delivery/SKILL.md#pull-request-monitoring) through merge before starting the next issue in the queue.
