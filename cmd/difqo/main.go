@@ -42,9 +42,12 @@ func run(args []string) error {
 	case "server":
 		flags.StringVar(&webPath, "web", "", "path to the built local web UI")
 		flags.StringVar(&artifactPath, "artifacts", "", "absolute path to the worker artifact directory")
+		flags.StringVar(&options.Runtime, "container-runtime", "", "auto, docker, podman, or a compatible CLI executable for review reruns (default auto)")
 	case "worker":
 		repo = flags.String("repo", "", "path to a local Git checkout")
-		flags.StringVar(&options.Image, "codex-image", "", "local Docker image for Codex execution")
+		flags.StringVar(&options.Image, "codex-image", "", "local container image for Codex execution")
+		flags.StringVar(&options.Runtime, "container-runtime", "", "auto, docker, podman, or a compatible CLI executable (default auto)")
+		flags.BoolVar(&options.DisableSELinuxLabel, "container-selinux-label-disable", false, "opt out of Podman SELinux labeling for Codex containers")
 		flags.StringVar(&options.Check, "check", "", "shell command to run in the isolated checkout")
 		flags.StringVar(&options.ArtifactRoot, "artifacts", "", "absolute host path for execution artifacts")
 		flags.StringVar(&options.AuthHome, "codex-home", "", "absolute path to a dedicated private Codex home")
@@ -65,6 +68,8 @@ func run(args []string) error {
 		if *repo == "" {
 			return errors.New("worker requires -repo PATH")
 		}
+		ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+		defer cancel()
 		var runOptions *execution.Options
 		if options != (execution.Options{}) {
 			resolved, err := filepath.Abs(*repo)
@@ -72,13 +77,11 @@ func run(args []string) error {
 				return err
 			}
 			*repo = resolved
-			if err := options.Validate(*repo); err != nil {
+			if err := options.Validate(ctx, *repo); err != nil {
 				return err
 			}
 			runOptions = &options
 		}
-		ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-		defer cancel()
 		return worker.Run(ctx, "http://"+address, *repo, runOptions)
 	}
 
@@ -116,7 +119,7 @@ func run(args []string) error {
 		}
 		defer artifacts.Close()
 	}
-	handler := http.NewCrossOriginProtection().Handler(controlplane.Handler(store.Tasks{DB: db}, web, artifacts))
+	handler := http.NewCrossOriginProtection().Handler(controlplane.Handler(store.Tasks{DB: db}, web, artifacts, options.Runtime))
 	server := &http.Server{
 		Addr: address,
 		Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

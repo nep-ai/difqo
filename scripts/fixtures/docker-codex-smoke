@@ -1,0 +1,17 @@
+#!/bin/sh
+# Use a disposable runner policy only for containers that start the Codex sandbox.
+set -eu
+if [ "${1:-}" = run ]; then
+    shift
+    for arg do
+        if [ "$arg" = --env=CODEX_HOME=/codex-home ]; then
+            set -- --security-opt "seccomp=${DIFQO_SMOKE_DOCKER_SECCOMP:?}" "$@"
+            if [ -n "${DIFQO_SMOKE_DOCKER_APPARMOR:-}" ]; then
+                set -- --security-opt "apparmor=$DIFQO_SMOKE_DOCKER_APPARMOR" "$@"
+            fi
+            break
+        fi
+    done
+    set -- run "$@"
+fi
+exec docker "$@"

@@ -13,8 +13,11 @@ import (
 )
 
 type container struct {
-	name, image, workspace string
+	name, workspace string
+	runtime         containerRuntime
 }
+
+const codexPermissions = `permissions={difqo={extends=":workspace",filesystem={":root"="deny",":minimal"="read","/usr/local"="read","/codex-home"="deny"}}}`
 
 func (c container) command(ctx context.Context, authHome string, args ...string) *exec.Cmd {
 	options := []string{
@@ -27,19 +30,29 @@ func (c container) command(ctx context.Context, authHome string, args ...string)
 		"--env=GIT_CONFIG_COUNT=1", "--env=GIT_CONFIG_KEY_0=safe.directory", "--env=GIT_CONFIG_VALUE_0=/workspace",
 		"--mount", "type=bind,src=" + c.workspace + ",dst=/workspace",
 	}
+	if c.runtime.podman {
+		options = append(options, "--http-proxy=false", "--read-only-tmpfs=false")
+	}
+	if c.runtime.rootless {
+		options = append(options, fmt.Sprintf("--userns=keep-id:uid=%d,gid=%d", os.Getuid(), os.Getgid()))
+	}
 	if authHome == "" {
 		options = append(options, "--network=none")
 	} else {
 		options = append(options, "--env=CODEX_HOME=/codex-home",
 			"--mount", "type=bind,src="+authHome+",dst=/codex-home")
+		if c.runtime.disableSELinuxLabel {
+			options = append(options, "--security-opt=label=disable")
+		}
 	}
-	return exec.CommandContext(ctx, "docker", append(options, append([]string{c.image}, args...)...)...)
+	options = append(options, c.runtime.imageID)
+	return exec.CommandContext(ctx, c.runtime.executable, append(options, args...)...)
 }
 
 func (c container) remove() {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	_ = exec.CommandContext(ctx, "docker", "rm", "-f", c.name).Run()
+	_ = exec.CommandContext(ctx, c.runtime.executable, "rm", "-f", c.name).Run()
 }
 
 func (c container) codex(ctx context.Context, authHome, goal string) (string, error) {
@@ -49,7 +62,7 @@ func (c container) codex(ctx context.Context, authHome, goal string) (string, er
 		"timeout", "-k", "5s", "120s", "codex", "app-server", "--stdio",
 		"-c", `cli_auth_credentials_store="file"`,
 		"-c", `default_permissions="difqo"`,
-		"-c", `permissions={difqo={extends=":workspace",filesystem={":root"="deny",":minimal"="read","/usr/local"="read","/codex-home"="deny"}}}`,
+		"-c", codexPermissions,
 	)
 	var stderr bytes.Buffer
 	var truncated bool
@@ -57,14 +70,14 @@ func (c container) codex(ctx context.Context, authHome, goal string) (string, er
 	cmd.WaitDelay = 2 * time.Second
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
-		return "could not open Docker input", err
+		return "could not open container runtime input", err
 	}
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
-		return "could not open Docker output", err
+		return "could not open container runtime output", err
 	}
 	if err := cmd.Start(); err != nil {
-		return "could not start the Docker CLI", err
+		return "could not start the container CLI", err
 	}
 	defer c.remove()
 	stop := context.AfterFunc(ctx, func() {
@@ -88,9 +101,10 @@ func codexDiagnostic(stderr string, waitErr, rpcErr error) string {
 	switch {
 	case strings.Contains(stderr, "invalid mount config"), strings.Contains(stderr, "mounts denied"),
 		strings.Contains(stderr, "bind source path does not exist"):
-		return "Docker rejected a bind mount. Check file sharing and directory access."
-	case strings.Contains(stderr, "cannot connect to the docker daemon"), strings.Contains(stderr, "error during connect"):
-		return "Docker engine is unavailable. Check the Docker context and engine status."
+		return "The container runtime rejected a bind mount. Check file sharing and directory access."
+	case strings.Contains(stderr, "cannot connect to the docker daemon"), strings.Contains(stderr, "error during connect"),
+		strings.Contains(stderr, "unable to connect to podman socket"):
+		return "The container engine is unavailable. Check the configured connection and engine status."
 	case errors.Is(rpcErr, errSandbox), strings.Contains(stderr, "bwrap:"), strings.Contains(stderr, "sandbox helper"):
 		return "Codex sandbox startup failed. Check runtime support for the Linux sandbox."
 	case strings.Contains(stderr, "failed to load configuration"), strings.Contains(stderr, "startup configuration unavailable"):
@@ -98,7 +112,7 @@ func codexDiagnostic(stderr string, waitErr, rpcErr error) string {
 	}
 	var exit *exec.ExitError
 	if errors.As(waitErr, &exit) && exit.ExitCode() >= 0 {
-		return fmt.Sprintf("Docker or Codex exited with status %d before the turn completed.", exit.ExitCode())
+		return fmt.Sprintf("The container runtime or Codex exited with status %d before the turn completed.", exit.ExitCode())
 	}
 	return "The Codex App Server connection ended before the turn completed."
 }
@@ -121,7 +135,7 @@ func (c container) capture(ctx context.Context, stdout, stderr io.Writer, script
 
 func mountPath(path string) error {
 	if !strings.HasPrefix(path, "/") || strings.ContainsAny(path, ",\"\r\n") {
-		return fmt.Errorf("unsupported Docker bind path: %q", path)
+		return fmt.Errorf("unsupported container bind path: %q", path)
 	}
 	return nil
 }
