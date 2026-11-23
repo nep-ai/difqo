@@ -12,7 +12,8 @@ flowchart LR
     Operator -->|"Start the private app connector"| SlackSocket["Private Slack Socket Mode connector"]
     SlackSocket -->|"Open an authenticated WebSocket and acknowledge deliveries"| Slack["Slack"]
     SlackSocket -->|"Map private DM goal events"| SlackBinding["Persisted Slack binding"]
-    Server -->|"Test official pairing and binding transitions"| SlackFixture["Opt-in loopback relay fixture"]
+    Server -->|"Poll official pairing status in tests"| SlackFixture["Opt-in loopback relay fixture"]
+    SlackFixture <-->|"Separate identity and installation callbacks, DM lookup"| SlackSimulator["Synthetic Slack endpoints"]
     Server -->|"Persist Slack connection mode and generation"| Postgres
     SlackImport -->|"Check the linked app, workspace, operator, and DM"| SlackBinding
     SlackBinding -->|"Save event identity and local task atomically"| Postgres
