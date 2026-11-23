@@ -15,10 +15,13 @@ import (
 	"github.com/nep-ai/difqo/internal/store"
 )
 
-func Run(ctx context.Context, address string, repo string, executionOptions *execution.Options) error {
+func Run(ctx context.Context, address string, repo string, executionOptions *execution.Options, githubRepositoryID int64) error {
 	client := &http.Client{Timeout: 10 * time.Second}
 	var task store.Task
-	err := request(ctx, client, "POST", address+"/tasks/claim", struct{}{}, &task)
+	claim := struct {
+		GitHubRepositoryID int64 `json:"github_repository_id,omitempty"`
+	}{githubRepositoryID}
+	err := request(ctx, client, "POST", address+"/tasks/claim", claim, &task)
 	if err != nil || task.Attempt == nil {
 		return err
 	}

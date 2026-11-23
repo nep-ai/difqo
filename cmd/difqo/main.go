@@ -30,12 +30,17 @@ func main() {
 }
 
 func run(args []string) error {
+	const usage = "usage: difqo server | difqo worker -repo PATH | difqo github-intake -help"
 	if len(args) == 0 {
-		return errors.New("usage: difqo server | difqo worker -repo PATH")
+		return errors.New(usage)
+	}
+	if args[0] == "github-intake" {
+		return runGitHubIntake(args[1:])
 	}
 	flags := flag.NewFlagSet(args[0], flag.ContinueOnError)
 	port := flags.Int("port", 8765, "loopback API port")
 	var repo *string
+	var githubRepositoryID int64
 	var webPath, artifactPath, projectsPath string
 	var options execution.Options
 	switch args[0] {
@@ -46,6 +51,7 @@ func run(args []string) error {
 		flags.StringVar(&options.Runtime, "container-runtime", "", "auto, docker, podman, or a compatible CLI executable for review reruns (default auto)")
 	case "worker":
 		repo = flags.String("repo", "", "path to a local Git checkout")
+		flags.Int64Var(&githubRepositoryID, "github-repository-id", 0, "claim tasks for this enrolled GitHub repository only")
 		flags.StringVar(&options.Image, "codex-image", "", "local container image for Codex execution")
 		flags.StringVar(&options.Runtime, "container-runtime", "", "auto, docker, podman, or a compatible CLI executable (default auto)")
 		flags.BoolVar(&options.DisableSELinuxLabel, "container-selinux-label-disable", false, "opt out of Podman SELinux labeling for Codex containers")
@@ -53,7 +59,7 @@ func run(args []string) error {
 		flags.StringVar(&options.ArtifactRoot, "artifacts", "", "absolute host path for execution artifacts")
 		flags.StringVar(&options.AuthHome, "codex-home", "", "absolute path to a dedicated private Codex home")
 	default:
-		return errors.New("usage: difqo server | difqo worker -repo PATH")
+		return errors.New(usage)
 	}
 	if err := flags.Parse(args[1:]); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
@@ -69,6 +75,9 @@ func run(args []string) error {
 		if *repo == "" {
 			return errors.New("worker requires -repo PATH")
 		}
+		if githubRepositoryID < 0 || (githubRepositoryID > 0 && options.Image == "") {
+			return errors.New("GitHub tasks require a positive -github-repository-id and Codex execution options")
+		}
 		ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 		defer cancel()
 		var runOptions *execution.Options
@@ -83,7 +92,7 @@ func run(args []string) error {
 			}
 			runOptions = &options
 		}
-		return worker.Run(ctx, "http://"+address, *repo, runOptions)
+		return worker.Run(ctx, "http://"+address, *repo, runOptions, githubRepositoryID)
 	}
 
 	dsn := os.Getenv("DIFQO_DATABASE_URL")
