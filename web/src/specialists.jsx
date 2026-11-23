@@ -3,6 +3,19 @@ import React, { useEffect, useRef, useState } from 'react'
 const actionLabel = { create: 'Approve specialist', update: 'Approve update', disable: 'Disable specialist' }
 const outcomeLabel = { approve: 'Approved', decline: 'Declined', revise: 'Changes requested', stale: 'Out of date' }
 
+const specialistTemplates = [
+  {
+    name: 'Committed change summary',
+    purpose: 'Review the file changes in the selected project’s latest commit.',
+    output: 'The commit ID and changed paths with Git change statuses, followed by the tracked file list.',
+  },
+  {
+    name: 'Tracked file inventory',
+    purpose: 'Inventory the paths tracked in the selected project’s committed snapshot.',
+    output: 'The commit ID and tracked file paths, with the latest commit’s changed paths for context.',
+  },
+]
+
 function draftFor(action, specialistID = 0, revision = 0, config = {}) {
   return {
     id: crypto.randomUUID(), action, specialist_id: specialistID, base_revision: revision,
@@ -202,6 +215,16 @@ export function Specialists({ request, mark, close, onQueued }) {
           <button className="primary" disabled={busy || !state.projects.length || !!draft} onClick={() => setDraft(draftFor('create'))}>
             Propose a specialist
           </button>
+          <details className="specialist-record">
+            <summary>Browse specialist templates</summary>
+            <p>Both templates use the local Git snapshot report. Each run needs a project-bound worker for an approved checkout with a commit.</p>
+            {specialistTemplates.map(template => <section className="specialist-proposal" key={template.name}>
+              <h3>{template.name}</h3>
+              <p>{template.purpose} {template.output}</p>
+              <button className="subtle" type="button" disabled={busy || !state.projects.length || !!draft}
+                onClick={() => setDraft(draftFor('create', 0, 0, template))}>Use {template.name.toLowerCase()} template</button>
+            </section>)}
+          </details>
           {state.specialists.length > 0 && <label className="specialist-field">Inspect a specialist
             <select value={inspected} onChange={event => inspect(Number(event.target.value))}>
               <option value={0}>Choose a specialist</option>
