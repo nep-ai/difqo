@@ -1,6 +1,7 @@
 package slackrelay
 
 import (
+	"context"
 	"crypto"
 	"crypto/rand"
 	"crypto/rsa"
@@ -8,13 +9,17 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"math/big"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"os"
 	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 const (
@@ -34,11 +39,23 @@ type fixture struct {
 	now                                          atomic.Int64
 	identityExchanges, installExchanges, dmCalls atomic.Int32
 	id, proof                                    string
+	db                                           *pgxpool.Pool
+	dsn                                          string
+	tokenKey                                     [32]byte
+	blockInstall                                 chan struct{}
+	exchanging                                   chan struct{}
+	blockDM                                      chan struct{}
+	resolving                                    chan struct{}
 }
 
 func newTestFixture(t *testing.T) *fixture {
 	t.Helper()
-	f := &fixture{t: t, id: strings.Repeat("a", 32), proof: strings.Repeat("b", 64)}
+	dsn := os.Getenv("DIFQO_SLACK_RELAY_TEST_DATABASE_URL")
+	if dsn == "" {
+		t.Skip("set DIFQO_SLACK_RELAY_TEST_DATABASE_URL to a migrated disposable relay database")
+	}
+	f := &fixture{t: t, dsn: dsn, id: randomSecret()[:32], proof: randomSecret()}
+	rand.Read(f.tokenKey[:])
 	f.now.Store(time.Now().Unix())
 	key, err := rsa.GenerateKey(rand.Reader, 2048)
 	if err != nil {
@@ -70,6 +87,10 @@ func newTestFixture(t *testing.T) *fixture {
 				return
 			}
 			switch token {
+			case "Bearer fixture-block-dm":
+				close(f.resolving)
+				<-f.blockDM
+				fallthrough
 			case "Bearer " + testBot:
 				writeJSON(w, map[string]any{"ok": true, "channel": map[string]any{"id": testChannel, "is_im": true, "user": testOperator}})
 			case "Bearer fixture-revoked":
@@ -86,15 +107,54 @@ func newTestFixture(t *testing.T) *fixture {
 		}
 	}))
 	t.Cleanup(f.slack.Close)
-	f.server = httptest.NewUnstartedServer(nil)
-	handler, err := newFixture("http://"+f.server.Listener.Addr().String(), f.slack.URL, testClient, testSecret, testApp, f.time)
+	f.startRelay("")
+	t.Cleanup(func() {
+		f.server.Close()
+		f.db.Close()
+	})
+	return f
+}
+
+func (f *fixture) startRelay(address string) {
+	f.t.Helper()
+	var err error
+	f.db, err = pgxpool.New(context.Background(), f.dsn)
 	if err != nil {
-		t.Fatal(err)
+		f.t.Fatal("open disposable relay database")
+	}
+	f.server = httptest.NewUnstartedServer(nil)
+	if address != "" {
+		f.server.Listener.Close()
+		f.server.Listener, err = net.Listen("tcp4", address)
+		if err != nil {
+			f.t.Fatalf("restart relay listener: %v", err)
+		}
+	}
+	handler, err := newFixture(f.db, f.tokenKey, "http://"+f.server.Listener.Addr().String(), f.slack.URL, testClient, testSecret, testApp, f.time)
+	if err != nil {
+		f.t.Fatal(err)
 	}
 	f.server.Config.Handler = handler
 	f.server.Start()
-	t.Cleanup(f.server.Close)
-	return f
+}
+
+func (f *fixture) restart() {
+	f.t.Helper()
+	address := f.server.Listener.Addr().String()
+	f.server.Close()
+	f.db.Close()
+	f.startRelay(address)
+}
+
+func (f *fixture) expire() {
+	f.t.Helper()
+	_, err := f.db.Exec(context.Background(), `
+		UPDATE slack_relay_pairings SET expires_at = clock_timestamp() - interval '1 second'
+		WHERE app_id = $1 AND id = $2
+	`, testApp, f.id)
+	if err != nil {
+		f.t.Fatal(err)
+	}
 }
 
 func (f *fixture) time() time.Time { return time.Unix(f.now.Load(), 0) }
@@ -146,6 +206,14 @@ func (f *fixture) exchange(w http.ResponseWriter, req *http.Request, key *rsa.Pr
 		scopes = "im:history,im:write"
 	case "revoked":
 		token = "fixture-revoked"
+	case "unavailable":
+		w.WriteHeader(http.StatusServiceUnavailable)
+		return
+	case "blocked-install":
+		close(f.exchanging)
+		<-f.blockInstall
+	case "blocked-dm":
+		token = "fixture-block-dm"
 	case "wrong-dm":
 		token = "fixture-wrong-dm"
 	}
@@ -367,13 +435,14 @@ func TestOfficialPairingRejectsExpiredAndReplayedCallbacks(t *testing.T) {
 	f.identity(identity, "operator", http.StatusConflict)
 	install := f.start(installApp)
 	f.identity(install, "operator", http.StatusConflict)
-	f.now.Add(int64(pairingTTL / time.Second))
+	f.expire()
+	f.restart()
 	f.install(install, "admin", http.StatusConflict)
 	f.poll("reconnect_required")
 	if f.identityExchanges.Load() != 1 || f.installExchanges.Load() != 0 {
 		t.Fatal("invalid callbacks reached Slack token endpoints")
 	}
-	f.id = strings.Repeat("d", 32)
+	f.id = randomSecret()[:32]
 	f.poll("connecting")
 	f.identity(f.start(signIn), "operator", http.StatusNoContent)
 	install = f.start(installApp)
@@ -391,8 +460,10 @@ func TestOfficialPairingReconnectAfterRevokedInstallation(t *testing.T) {
 	if f.poll("reconnect_required").Binding != nil {
 		t.Fatal("revoked installation exposed a binding")
 	}
+	f.restart()
+	f.poll("reconnect_required")
 	f.request("POST", "/pairings/"+f.id+"/install", f.proof, nil, http.StatusConflict, nil)
-	f.id = strings.Repeat("d", 32)
+	f.id = randomSecret()[:32]
 	f.poll("connecting")
 	f.identity(f.start(signIn), "operator", http.StatusNoContent)
 	f.install(f.start(installApp), "admin", http.StatusNoContent)
@@ -401,8 +472,162 @@ func TestOfficialPairingReconnectAfterRevokedInstallation(t *testing.T) {
 
 func TestOfficialPairingFixtureRejectsRemoteOrigins(t *testing.T) {
 	for _, origin := range []string{"https://slack.com", "http://localhost:8080", "http://127.0.0.1:8080/api"} {
-		if _, err := NewFixture("http://127.0.0.1:3210", origin, testClient, testSecret, testApp); err == nil {
+		if _, err := NewFixture(new(pgxpool.Pool), [32]byte{1}, "http://127.0.0.1:3210", origin, testClient, testSecret, testApp); err == nil {
 			t.Errorf("accepted non-fixture Slack origin %q", origin)
 		}
 	}
+}
+
+func TestOfficialPairingResumesAcrossRelayRestarts(t *testing.T) {
+	f := newTestFixture(t)
+	f.poll("connecting")
+	install := f.start(installApp)
+	f.restart()
+	f.install(install, "admin", http.StatusNoContent)
+	f.restart()
+	f.install(install, "admin", http.StatusConflict)
+	if v := f.poll("installed"); v.Operator != "" || v.Installed != testWorkspace || v.Binding != nil {
+		t.Fatalf("admin installation changed operator identity: %+v", v)
+	}
+
+	// The test provider token survives only as authenticated ciphertext until
+	// the authorized poll resolves the DM.
+	var sealed []byte
+	if err := f.db.QueryRow(context.Background(), `
+		SELECT sealed_bot_token FROM slack_relay_pairings WHERE app_id = $1 AND id = $2
+	`, testApp, f.id).Scan(&sealed); err != nil || len(sealed) == 0 || strings.Contains(string(sealed), testBot) {
+		t.Fatal("expected a sealed fixture bot token")
+	}
+	identity := f.start(signIn)
+	f.restart()
+	f.identity(identity, "operator", http.StatusNoContent)
+	f.restart()
+	f.identity(identity, "operator", http.StatusConflict)
+	ready := f.poll("ready_to_link")
+	f.restart()
+	reloaded := f.poll("ready_to_link")
+	if ready.Binding == nil || reloaded.Binding == nil || *ready.Binding != *reloaded.Binding ||
+		reloaded.Operator != testOperator || f.dmCalls.Load() != 1 {
+		t.Fatalf("binding was lost or replaced across restart: %+v", reloaded)
+	}
+	if err := f.db.QueryRow(context.Background(), `
+		SELECT sealed_bot_token FROM slack_relay_pairings WHERE app_id = $1 AND id = $2
+	`, testApp, f.id).Scan(&sealed); err != nil || sealed != nil {
+		t.Fatal("resolved pairing retained the fixture bot token")
+	}
+	f.request("DELETE", "/pairings/"+f.id, strings.Repeat("f", 64), nil, http.StatusUnauthorized, nil)
+	f.request("DELETE", "/pairings/"+f.id, f.proof, nil, http.StatusNoContent, nil)
+	f.restart()
+	if v := f.poll("reconnect_required"); v.Operator != "" || v.Installed != "" || v.Binding != nil {
+		t.Fatalf("retired pairing exposed the previous binding: %+v", v)
+	}
+	f.request("PUT", "/pairings/"+f.id, strings.Repeat("f", 64), nil, http.StatusUnauthorized, nil)
+}
+
+func TestOfficialPairingPendingSurvivesRelayRestart(t *testing.T) {
+	f := newTestFixture(t)
+	f.poll("connecting")
+	f.identity(f.start(signIn), "operator", http.StatusNoContent)
+	first := f.start(installApp)
+	f.request("POST", "/pairings/"+f.id+"/approval-needed", f.proof, nil, http.StatusNoContent, nil)
+	f.restart()
+	v := f.poll("approval_needed")
+	if v.Workspace != testWorkspace || v.Operator != testOperator || v.Installed != "" || v.Binding != nil {
+		t.Fatalf("unexpected saved approval state: %+v", v)
+	}
+	next := f.start(installApp)
+	f.restart()
+	f.install(first, "admin", http.StatusConflict)
+	f.install(next, "admin", http.StatusNoContent)
+	f.poll("ready_to_link")
+}
+
+func TestOfficialPairingRevocationFencesInFlightExchanges(t *testing.T) {
+	f := newTestFixture(t)
+	f.poll("connecting")
+	f.identity(f.start(signIn), "operator", http.StatusNoContent)
+	install := f.start(installApp)
+	f.blockInstall, f.exchanging = make(chan struct{}), make(chan struct{})
+	result := f.asyncRequest("GET", "/oauth/install?"+url.Values{
+		"state": {install.Get("state")}, "code": {"blocked-install"},
+	}.Encode(), "")
+	awaitProvider(t, f.exchanging, f.blockInstall)
+	f.install(install, "admin", http.StatusConflict)
+	f.request("DELETE", "/pairings/"+f.id, f.proof, nil, http.StatusNoContent, nil)
+	close(f.blockInstall)
+	if code := <-result; code != http.StatusConflict || f.installExchanges.Load() != 1 {
+		t.Fatalf("callback was replayed or committed after revocation (HTTP %d)", code)
+	}
+	f.restart()
+	f.install(install, "admin", http.StatusConflict)
+	f.poll("reconnect_required")
+
+	f.id = randomSecret()[:32]
+	f.poll("connecting")
+	f.install(f.start(installApp), "blocked-dm", http.StatusNoContent)
+	f.identity(f.start(signIn), "operator", http.StatusNoContent)
+	f.blockDM, f.resolving = make(chan struct{}), make(chan struct{})
+	result = f.asyncRequest("PUT", "/pairings/"+f.id, f.proof)
+	awaitProvider(t, f.resolving, f.blockDM)
+	f.request("DELETE", "/pairings/"+f.id, f.proof, nil, http.StatusNoContent, nil)
+	close(f.blockDM)
+	if code := <-result; code != http.StatusOK {
+		t.Fatalf("fenced poll returned HTTP %d", code)
+	}
+	f.restart()
+	f.poll("reconnect_required")
+}
+
+func (f *fixture) asyncRequest(method, path, proof string) <-chan int {
+	f.t.Helper()
+	req, err := http.NewRequest(method, f.server.URL+path, nil)
+	if err != nil {
+		f.t.Fatal(err)
+	}
+	if proof != "" {
+		req.Header.Set("Authorization", "Bearer "+proof)
+	}
+	client := f.server.Client()
+	done := make(chan int, 1)
+	go func() {
+		res, err := client.Do(req)
+		if err != nil {
+			done <- 0
+			return
+		}
+		res.Body.Close()
+		done <- res.StatusCode
+	}()
+	return done
+}
+
+func awaitProvider(t *testing.T, entered <-chan struct{}, release chan struct{}) {
+	t.Helper()
+	t.Cleanup(func() {
+		select {
+		case <-release:
+		default:
+			close(release)
+		}
+	})
+	select {
+	case <-entered:
+	case <-time.After(5 * time.Second):
+		t.Fatal("fixture provider call did not start")
+	}
+}
+
+func TestOfficialPairingRetriesWithFreshStateAfterExchangeFails(t *testing.T) {
+	f := newTestFixture(t)
+	f.poll("connecting")
+	f.identity(f.start(signIn), "operator", http.StatusNoContent)
+	install := f.start(installApp)
+	f.install(install, "unavailable", http.StatusBadGateway)
+	f.restart()
+	f.install(install, "admin", http.StatusConflict)
+	if v := f.poll("connecting"); v.Operator != testOperator || v.Installed != "" || f.installExchanges.Load() != 1 {
+		t.Fatalf("failed exchange left incorrect pairing state: %+v", v)
+	}
+	f.install(f.start(installApp), "admin", http.StatusNoContent)
+	f.poll("ready_to_link")
 }

@@ -3,9 +3,9 @@ package slackrelay
 
 import (
 	"context"
+	"crypto/aes"
+	"crypto/cipher"
 	"crypto/rand"
-	"crypto/sha256"
-	"crypto/subtle"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -14,14 +14,12 @@ import (
 	"net/url"
 	"regexp"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/coreos/go-oidc/v3/oidc"
+	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/nep-ai/difqo/internal/store"
 )
-
-const pairingTTL = 15 * time.Minute
 
 type flowKind string
 
@@ -29,24 +27,6 @@ const (
 	signIn     flowKind = "identity"
 	installApp flowKind = "install"
 )
-
-type flow struct {
-	pairing *pairing
-	kind    flowKind
-	nonce   string
-	expires time.Time
-	used    bool
-}
-
-type pairing struct {
-	proof            [sha256.Size]byte
-	expires          time.Time
-	identity         identity
-	install          installation
-	channel          string
-	pending, revoked bool
-	flows            map[flowKind]string
-}
 
 type pairingStatus struct {
 	State     string              `json:"state"`
@@ -57,12 +37,9 @@ type pairingStatus struct {
 }
 
 type relay struct {
-	mu       sync.Mutex
-	pairings map[string]*pairing
-	flows    map[string]*flow
+	pairings pairingStore
 	origin   string
 	slack    slackClient
-	now      func() time.Time
 }
 
 var (
@@ -71,15 +48,26 @@ var (
 	slackAppID = regexp.MustCompile("^A[A-Z0-9]{1,63}$")
 )
 
-// NewFixture builds an HTTP handler with a numeric loopback Slack simulator
-// and in-memory pairing state. It is deliberately unwired from the application.
-func NewFixture(origin, slackOrigin, clientID, clientSecret, appID string) (http.Handler, error) {
-	return newFixture(origin, slackOrigin, clientID, clientSecret, appID, time.Now)
+// NewFixture builds an HTTP handler for a numeric loopback Slack simulator
+// and a dedicated relay database. The synthetic token key must survive restarts.
+func NewFixture(db *pgxpool.Pool, tokenKey [32]byte, origin, slackOrigin, clientID, clientSecret, appID string) (http.Handler, error) {
+	return newFixture(db, tokenKey, origin, slackOrigin, clientID, clientSecret, appID, time.Now)
 }
 
-func newFixture(origin, slackOrigin, clientID, clientSecret, appID string, now func() time.Time) (http.Handler, error) {
+func newFixture(db *pgxpool.Pool, tokenKey [32]byte, origin, slackOrigin, clientID, clientSecret, appID string, now func() time.Time) (http.Handler, error) {
 	if !loopbackOrigin(origin) || !loopbackOrigin(slackOrigin) || clientID == "" || clientSecret == "" || !slackAppID.MatchString(appID) {
 		return nil, errors.New("Slack relay fixture requires numeric HTTP loopback origins and synthetic app configuration")
+	}
+	if db == nil || tokenKey == ([32]byte{}) {
+		return nil, errors.New("Slack relay fixture requires a relay database and synthetic token key")
+	}
+	block, err := aes.NewCipher(tokenKey[:])
+	if err != nil {
+		return nil, err
+	}
+	tokens, err := cipher.NewGCMWithRandomNonce(block)
+	if err != nil {
+		return nil, err
 	}
 	client := &http.Client{
 		Transport:     &http.Transport{},
@@ -88,13 +76,14 @@ func newFixture(origin, slackOrigin, clientID, clientSecret, appID string, now f
 	}
 	keys := oidc.NewRemoteKeySet(oidc.ClientContext(context.Background(), client), slackOrigin+"/openid/connect/keys")
 	r := &relay{
-		origin: origin, now: now, pairings: make(map[string]*pairing), flows: make(map[string]*flow),
+		origin: origin, pairings: pairingStore{db: db, appID: appID, tokens: tokens},
 		slack: slackClient{origin: slackOrigin, clientID: clientID, clientSecret: clientSecret, appID: appID, http: client,
 			verifier: oidc.NewVerifier(slackOrigin, keys, &oidc.Config{ClientID: clientID,
 				SupportedSigningAlgs: []string{oidc.RS256}, Now: now})},
 	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("PUT /pairings/{id}", r.poll)
+	mux.HandleFunc("DELETE /pairings/{id}", r.revoke)
 	mux.HandleFunc("POST /pairings/{id}/identity", r.start(signIn))
 	mux.HandleFunc("POST /pairings/{id}/install", r.start(installApp))
 	mux.HandleFunc("POST /pairings/{id}/approval-needed", r.markPending)
@@ -117,71 +106,63 @@ func loopbackOrigin(raw string) bool {
 	return err == nil && ip.IsLoopback()
 }
 
-// access requires the relay mutex. PUT is the only route that can register an ID.
-func (r *relay) access(w http.ResponseWriter, req *http.Request, register bool) *pairing {
-	id := req.PathValue("id")
-	proof, ok := strings.CutPrefix(req.Header.Get("Authorization"), "Bearer ")
-	if !ok || !pairingID.MatchString(id) || !proofID.MatchString(proof) {
+func pairingAuth(req *http.Request) (id, proof string, ok bool) {
+	id = req.PathValue("id")
+	proof, ok = strings.CutPrefix(req.Header.Get("Authorization"), "Bearer ")
+	return id, proof, ok && pairingID.MatchString(id) && proofID.MatchString(proof)
+}
+
+func pairingError(w http.ResponseWriter, err error) {
+	switch {
+	case errors.Is(err, errPairingAccess):
 		w.WriteHeader(http.StatusUnauthorized)
-		return nil
+	case errors.Is(err, errPairingState):
+		w.WriteHeader(http.StatusConflict)
+	default:
+		w.WriteHeader(http.StatusServiceUnavailable)
 	}
-	hash := sha256.Sum256([]byte(proof))
-	p := r.pairings[id]
-	if p == nil && register {
-		now := r.now()
-		for _, prior := range r.pairings {
-			if !now.Before(prior.expires) {
-				r.clear(prior)
-			}
-		}
-		p = &pairing{proof: hash, expires: now.Add(pairingTTL), flows: make(map[flowKind]string)}
-		r.pairings[id] = p
-	}
-	if p == nil || subtle.ConstantTimeCompare(p.proof[:], hash[:]) != 1 {
-		w.WriteHeader(http.StatusUnauthorized)
-		return nil
-	}
-	return p
 }
 
 func (r *relay) poll(w http.ResponseWriter, req *http.Request) {
-	r.mu.Lock()
-	p := r.access(w, req, true)
-	if p == nil {
-		r.mu.Unlock()
+	id, proof, ok := pairingAuth(req)
+	if !ok {
+		w.WriteHeader(http.StatusUnauthorized)
 		return
 	}
-	who, installed := p.identity, p.install
-	resolve := r.now().Before(p.expires) && !p.revoked && p.channel == "" &&
-		who.Workspace != "" && who.Workspace == installed.workspace
-	r.mu.Unlock()
-
-	if resolve {
-		channel, err := r.slack.openDM(req.Context(), installed, who.Operator)
-		r.mu.Lock()
-		if r.now().Before(p.expires) && !p.revoked && p.install == installed && p.identity == who {
-			if errors.Is(err, errRevoked) {
-				p.revoked = true
-			} else if err == nil {
-				p.channel = channel
+	ctx := req.Context()
+	p, err := r.pairings.read(ctx, id, proof)
+	if err != nil {
+		pairingError(w, err)
+		return
+	}
+	if !p.terminal() && p.channel == "" && p.identity.Workspace != "" && p.identity.Workspace == p.workspace {
+		token, err := r.pairings.tokens.Open(nil, nil, p.sealedToken, r.pairings.tokenScope(id, p.workspace))
+		if err != nil {
+			pairingError(w, err)
+			return
+		}
+		channel, dmErr := r.slack.openDM(ctx, installation{workspace: p.workspace, botToken: string(token)}, p.identity.Operator)
+		revoked := errors.Is(dmErr, errRevoked)
+		if dmErr == nil || revoked {
+			if err := r.pairings.finishDM(ctx, id, proof, channel, revoked); err != nil {
+				pairingError(w, err)
+				return
 			}
 		}
-		r.mu.Unlock()
+		p, err = r.pairings.read(ctx, id, proof)
+		if err != nil {
+			pairingError(w, err)
+			return
+		}
 	}
-
-	r.mu.Lock()
-	status := r.status(p)
-	r.mu.Unlock()
-	writeJSON(w, status)
+	writeJSON(w, r.status(p))
 }
 
-// status requires the relay mutex.
-func (r *relay) status(p *pairing) pairingStatus {
-	if p.revoked || !r.now().Before(p.expires) {
-		r.clear(p)
+func (r *relay) status(p pairing) pairingStatus {
+	if p.terminal() {
 		return pairingStatus{State: "reconnect_required"}
 	}
-	v := pairingStatus{State: "connecting", Workspace: p.identity.Workspace, Operator: p.identity.Operator, Installed: p.install.workspace}
+	v := pairingStatus{State: "connecting", Workspace: p.identity.Workspace, Operator: p.identity.Operator, Installed: p.workspace}
 	switch {
 	case p.channel != "":
 		v.State = "ready_to_link"
@@ -194,53 +175,42 @@ func (r *relay) status(p *pairing) pairingStatus {
 	return v
 }
 
-// clear releases provider data while retaining proof ownership of a terminal pairing.
-func (r *relay) clear(p *pairing) {
-	for _, state := range p.flows {
-		delete(r.flows, state)
-	}
-	*p = pairing{proof: p.proof, expires: p.expires, revoked: p.revoked}
+func (r *relay) revoke(w http.ResponseWriter, req *http.Request) {
+	r.change(w, req, r.pairings.revoke)
 }
 
 func (r *relay) markPending(w http.ResponseWriter, req *http.Request) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	p := r.access(w, req, false)
-	if p == nil {
+	r.change(w, req, r.pairings.pending)
+}
+
+func (r *relay) change(w http.ResponseWriter, req *http.Request, operation func(context.Context, string, string) error) {
+	id, proof, ok := pairingAuth(req)
+	if !ok {
+		w.WriteHeader(http.StatusUnauthorized)
 		return
 	}
-	if !r.now().Before(p.expires) || p.revoked || p.identity.Workspace == "" ||
-		p.install.workspace != "" || p.flows[installApp] == "" {
-		w.WriteHeader(http.StatusConflict)
+	if err := operation(req.Context(), id, proof); err != nil {
+		pairingError(w, err)
 		return
 	}
-	p.pending = true
 	w.WriteHeader(http.StatusNoContent)
 }
 
 func (r *relay) start(kind flowKind) http.HandlerFunc {
 	return func(w http.ResponseWriter, req *http.Request) {
-		r.mu.Lock()
-		defer r.mu.Unlock()
-		p := r.access(w, req, false)
-		if p == nil {
+		id, proof, ok := pairingAuth(req)
+		if !ok {
+			w.WriteHeader(http.StatusUnauthorized)
 			return
 		}
-		if !r.now().Before(p.expires) || p.revoked ||
-			(kind == signIn && p.identity.Workspace != "") || (kind == installApp && p.install.workspace != "") {
-			w.WriteHeader(http.StatusConflict)
-			return
-		}
-		delete(r.flows, p.flows[kind])
 		state, nonce := randomSecret(), ""
 		if kind == signIn {
 			nonce = randomSecret()
 		}
-		r.flows[state] = &flow{pairing: p, kind: kind, nonce: nonce, expires: p.expires}
-		p.flows[kind] = state
-		team := p.identity.Workspace
-		if kind == signIn {
-			team = p.install.workspace
+		team, err := r.pairings.start(req.Context(), id, proof, kind, state, nonce)
+		if err != nil {
+			pairingError(w, err)
+			return
 		}
 		writeJSON(w, map[string]string{"url": r.slack.authorize(kind, r.callbackURL(kind), state, nonce, team)})
 	}
@@ -265,57 +235,35 @@ func (r *relay) callback(kind flowKind) http.HandlerFunc {
 			w.WriteHeader(http.StatusBadRequest)
 			return
 		}
-		r.mu.Lock()
-		f := r.flows[state]
-		if f == nil || f.kind != kind || f.used || !r.now().Before(f.expires) || f.pairing.revoked {
-			r.mu.Unlock()
-			w.WriteHeader(http.StatusConflict)
+		ctx := req.Context()
+		f, err := r.pairings.consume(ctx, kind, state)
+		if err != nil {
+			pairingError(w, err)
 			return
 		}
-		f.used = true
-		r.mu.Unlock()
-
 		if denied != "" {
 			w.WriteHeader(http.StatusNoContent)
 			return
 		}
-		result := r.complete(req, f, state, code)
-		w.WriteHeader(result)
-	}
-}
 
-func (r *relay) complete(req *http.Request, f *flow, state, code string) int {
-	var who identity
-	var installed installation
-	var err error
-	callback := r.callbackURL(f.kind)
-	if f.kind == signIn {
-		who, err = r.slack.exchangeIdentity(req.Context(), callback, code, f.nonce)
-	} else {
-		installed, err = r.slack.exchangeInstall(req.Context(), callback, code)
-	}
-	if err != nil {
-		return http.StatusBadGateway
-	}
-
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	p := f.pairing
-	if p.flows[f.kind] != state || !r.now().Before(f.expires) || p.revoked {
-		return http.StatusConflict
-	}
-	if f.kind == signIn {
-		p.identity = who
-		if p.install.workspace != who.Workspace {
-			p.install = installation{}
+		var who identity
+		var installed installation
+		callback := r.callbackURL(kind)
+		if kind == signIn {
+			who, err = r.slack.exchangeIdentity(ctx, callback, code, f.nonce)
+		} else {
+			installed, err = r.slack.exchangeInstall(ctx, callback, code)
 		}
-	} else {
-		if p.identity.Workspace != "" && installed.workspace != p.identity.Workspace {
-			return http.StatusConflict
+		if err != nil {
+			w.WriteHeader(http.StatusBadGateway)
+			return
 		}
-		p.install, p.pending = installed, false
+		if err := r.pairings.complete(ctx, f, who, installed); err != nil {
+			pairingError(w, err)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
 	}
-	return http.StatusNoContent
 }
 
 func (r *relay) callbackURL(kind flowKind) string {

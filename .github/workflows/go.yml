@@ -47,6 +47,18 @@ jobs:
       - run: go test ./...
       - run: go build -o bin/difqo ./cmd/difqo
 
+      - name: Test durable Slack relay pairing
+        env:
+          POSTGRES_CONTAINER: ${{ job.services.postgres.id }}
+          POSTGRES_PORT: ${{ job.services.postgres.ports['5432'] }}
+        run: |
+          docker exec "$POSTGRES_CONTAINER" createdb -U postgres difqo_relay_smoke
+          for migration in relay/migrations/*.sql; do
+            docker exec -i "$POSTGRES_CONTAINER" psql -U postgres -d difqo_relay_smoke -v ON_ERROR_STOP=1 < "$migration"
+          done
+          DIFQO_SLACK_RELAY_TEST_DATABASE_URL="postgres://postgres:smoke-test@127.0.0.1:${POSTGRES_PORT}/difqo_relay_smoke?sslmode=disable" \
+            go test -race -count=1 ./internal/slackrelay
+
       - name: Build Codex execution and smoke images
         run: |
           docker build -t difqo-codex:0.171.0 containers/codex
