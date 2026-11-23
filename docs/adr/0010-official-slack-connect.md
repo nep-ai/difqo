@@ -128,11 +128,27 @@ pairing. Org-wide installations are outside the first workspace-level slice.
 | Inbound delivery | Echo a valid signed URL challenge with no binding and verify only a successful response. Reject unsigned or stale challenges. Send signed synthetic events, stale or invalid signatures, and events from a second workspace, user, and DM. Verify one authorized goal and zero unauthorized tasks. Retry after relay restart and simulated loss of the local receipt. Each event creates one task bound to the existing saved decision. Simulate a disconnect with delivery in flight and verify the retired generation cannot import it. GitHub intake and the private Socket Mode fixtures still pass. |
 | UI and live acceptance | On fake endpoints, exercise pending, installed-but-unlinked, connected, offline, revoked, and reconnect from Chief of Staff. Enable the entry point for real users only after the official test app and relay can complete the flow. With owner authorization, verify in one approved test workspace that only the linked operator's DM creates a local, reviewable task. Later slices cover status, cancellation, action-specific approval, and replay-safe replies. |
 
-The current singleton binding preserves a private app's IDs and has no
-disconnect or replacement lifecycle. The first independently testable code
-slice should add that lifecycle with a fake relay and test the migration
-against an existing private binding. Keep the Connect Slack entry point
-disabled until the lifecycle, relay, and UI can complete a real connection.
+The local connection lifecycle and migration now preserve existing private
+bindings. The next relay slice provides a numeric loopback HTTP fixture in
+`internal/slackrelay`. Its proof-authenticated `PUT /pairings/{id}` returns the
+status consumed by the local lifecycle. Separate proof-authenticated
+`POST /pairings/{id}/identity` and `POST /pairings/{id}/install` return short-lived
+authorization URLs. Slack returns identity results by form POST and install
+results by query parameters. Callbacks consume purpose-specific state and the
+identity exchange also verifies the signed nonce. The local caller can record
+an explicit request for workspace approval with
+`POST /pairings/{id}/approval-needed`. A denied callback itself records no
+approval request. A matching workspace and operator can become
+`ready_to_link` after the proof-authenticated poll resolves the DM. Local
+confirmation remains the activation boundary.
+
+Run `go test ./internal/slackrelay` for the two callback orders, wrong app,
+workspace or identity, expiry, replay, pending approval, and DM resolution
+against simulated Slack endpoints. The fixture keeps pairing state in memory
+and installation tokens are synthetic. Durable pairing and installation
+reuse, explicit relay-side cancellation and claim, revocation after a DM
+has been linked, and the public entry point remain follow-up work. The fixture
+does no Slack event delivery.
 An outgoing-only local client keeps the workstation off the public Internet.
 A direct OAuth callback on each workstation would distribute Slack secrets
 and require a reachable callback for event delivery. An optional private
