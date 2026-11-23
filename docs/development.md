@@ -257,6 +257,16 @@ to see its current approved configuration, propose an update, or review a
 disable request. A single profile covers snapshot review for all approved
 projects.
 
+### Start from a specialist template
+
+In **Specialists**, open **Browse specialist templates** and choose
+**Committed change summary** or **Tracked file inventory**. Both use the
+same local Git snapshot report and prefill the name, purpose, and expected
+output. Edit those fields, select the projects to authorize, and review and
+approve the proposal. The resulting specialist uses the usual update and
+approval flow. Running it requires a project-bound worker and a committed
+checkout.
+
 ### Start and inspect a specialist run
 
 In **Project decision**, select the named project to save its decision. Ordinary
