@@ -340,6 +340,36 @@ DIFQO_GITHUB_TEST_DATABASE_URL="$DIFQO_DATABASE_URL" \
   go test -count=1 ./internal/githubintake
 ```
 
+## Private Slack app intake
+
+The planned default is **Connect Slack** in Chief of Staff using the official
+Difqo app. For a private app, enable Socket Mode, install the app in the
+workspace, enable user messages in App Home, and subscribe to the
+`message.im` bot event with `im:history`. Make an app-level token with `connections:write` available locally as
+`DIFQO_SLACK_APP_TOKEN`. Keep the token outside Git.
+[Slack Socket Mode](https://docs.slack.dev/apis/events-api/using-socket-mode/) ·
+[Slack direct-message events](https://docs.slack.dev/reference/events/message.im/) ·
+[Slack App Home](https://docs.slack.dev/surfaces/app-home/)
+
+Run the connector with your app, workspace, Slack operator, and private DM
+IDs. The current database accepts one binding. Its first accepted goal
+records the binding, which subsequent connector runs check at startup.
+
+```sh
+./bin/difqo slack-socket -app-id A11 -workspace-id T11 -operator-id U11 -dm-id D11
+```
+
+Send `goal` followed by the task in the configured DM. The task appears in
+Chief of Staff and uses the normal local queue and approval flow. The connector
+reopens the socket on refresh or a transient failure. If Slack disables Socket
+Mode or rejects the credentials, correct the app configuration and restart the
+connector. Stop it with Ctrl-C. DM replies and approvals are tracked in
+[#11](https://github.com/nep-ai/difqo/issues/11).
+
+Run `go test ./internal/slackintake` to exercise a local HTTPS and WebSocket
+fixture with synthetic input. The PostgreSQL smoke test verifies durable event
+deduplication and isolation without a Slack connection.
+
 ## Offline Slack intake verification
 
 Use a disposable migrated database. Run `slack-import` with the configured
@@ -358,6 +388,5 @@ workspace, sender, or conversation to verify rejection. The PostgreSQL smoke
 test also covers simultaneous delivery and replay after restart.
 
 This command accepts events from a trusted local source. Official Connect
-Slack and private Socket Mode need authenticated delivery adapters. Slack
-transport, DM control actions, and replies are tracked in
+Slack, DM control actions, and replies are tracked in
 [#11](https://github.com/nep-ai/difqo/issues/11).

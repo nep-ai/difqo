@@ -535,7 +535,7 @@ with TemporaryDirectory(prefix='difqo-smoke-') as scratch:
                   'synthetic turn, container cleanup, and evidence retrieval')
 
         slack_flags = ['-app-id', 'A11', '-workspace-id', 'T11', '-operator-id', 'U11', '-dm-id', 'D11']
-        event = {'event_id': 'EV11', 'app_id': 'A11', 'workspace_id': 'T11', 'operator_id': 'U11',
+        event = {'event_id': 'Ev11', 'app_id': 'A11', 'workspace_id': 'T11', 'operator_id': 'U11',
                  'channel_id': 'D11', 'type': 'message', 'channel_type': 'im', 'bot': False,
                  'text': 'goal Review the synthetic Slack snapshot'}
 

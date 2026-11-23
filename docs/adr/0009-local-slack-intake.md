@@ -27,6 +27,23 @@ original task. The first binding is preserved after restart.
 The local queue, evidence, and patch approvals remain authoritative. The
 existing patch flow validates the patch and check in Chief of Staff. Future
 Slack approval controls must call that contract with explicit action and
-identity context. Connection flows, linking and reconnect, cancellation, and
-a deduplicated reply path belong to subsequent slices. The offline harness
+identity context. Official connection, linking and revocation, cancellation, and a deduplicated
+reply path belong to subsequent slices. The offline harness
 uses a fixture database and makes no Slack API calls.
+
+## Private Socket Mode transport
+
+The local connector uses an app-level token to obtain a temporary socket URL
+from Slack's Web API. It requires a secure Slack host and verifies the app ID
+in the socket greeting. It maps the Events API workspace, app, sender, and
+conversation to the existing binding. Slack-specific framing and connection
+management stay in this adapter. The shared task queue and approval rules
+remain local.
+
+The connector acknowledges valid goals after the database commits and uses the
+Events API event ID as the replay key. Unrelated events receive a bare
+acknowledgement. Failed writes leave the delivery unacknowledged. Refresh and
+transient connection failure trigger a fresh ticket request. An explicit Slack
+disable or an app mismatch stops the connector. One connection keeps the
+private setup small. This can leave a brief delivery gap during refresh.
+[Slack Socket Mode protocol](https://docs.slack.dev/apis/events-api/using-socket-mode/)

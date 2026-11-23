@@ -16,6 +16,29 @@ type SlackBinding struct {
 	ChannelID   string `json:"channel_id"`
 }
 
+const slackBindingQuery = `
+	SELECT app_id, workspace_id, operator_id, channel_id
+	FROM slack_intake_binding WHERE singleton`
+
+func readSlackBinding(row *sql.Row, binding SlackBinding) error {
+	var saved SlackBinding
+	if err := row.Scan(&saved.AppID, &saved.WorkspaceID, &saved.OperatorID, &saved.ChannelID); err != nil {
+		return err
+	}
+	if saved != binding {
+		return ErrSlackBinding
+	}
+	return nil
+}
+
+func (s Tasks) CheckSlackBinding(ctx context.Context, binding SlackBinding) error {
+	err := readSlackBinding(s.DB.QueryRowContext(ctx, slackBindingQuery), binding)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil
+	}
+	return err
+}
+
 // ImportSlack atomically creates a local task and its Slack event identity.
 func (s Tasks) ImportSlack(ctx context.Context, binding SlackBinding, eventID, goal string) (bool, error) {
 	tx, err := s.DB.BeginTx(ctx, nil)
@@ -29,16 +52,8 @@ func (s Tasks) ImportSlack(ctx context.Context, binding SlackBinding, eventID, g
 		binding.AppID, binding.WorkspaceID, binding.OperatorID, binding.ChannelID); err != nil {
 		return false, err
 	}
-	var saved SlackBinding
-	err = tx.QueryRowContext(ctx, `
-		SELECT app_id, workspace_id, operator_id, channel_id
-		FROM slack_intake_binding WHERE singleton FOR UPDATE`).
-		Scan(&saved.AppID, &saved.WorkspaceID, &saved.OperatorID, &saved.ChannelID)
-	if err != nil {
+	if err := readSlackBinding(tx.QueryRowContext(ctx, slackBindingQuery+" FOR UPDATE"), binding); err != nil {
 		return false, err
-	}
-	if saved != binding {
-		return false, ErrSlackBinding
 	}
 
 	var savedGoal string
