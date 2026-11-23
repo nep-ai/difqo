@@ -157,8 +157,9 @@ a key supplied to the test handler. Keeping that key across restart lets the
 relay resolve the DM after an install-first flow. The fixture discards the
 credential when the DM is resolved or the pairing is retired. A proof-authenticated
 `DELETE /pairings/{id}` retires the pairing. The relay also retires a pairing
-when it observes expiry or a revoked token during DM lookup. Retirement clears
-provider data and keeps a tombstone so an old poll cannot recreate the ID.
+when a poll or callback observes expiry, or it receives a revoked token error
+during DM lookup. Retirement clears provider data and keeps a tombstone so
+an old poll cannot recreate the ID.
 
 Apply `relay/migrations/0001_slack_pairing.sql` to a **separate disposable
 PostgreSQL database**. Set `DIFQO_SLACK_RELAY_TEST_DATABASE_URL` to that database

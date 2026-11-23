@@ -550,7 +550,7 @@ func TestOfficialPairingRevocationFencesInFlightExchanges(t *testing.T) {
 	f.blockInstall, f.exchanging = make(chan struct{}), make(chan struct{})
 	result := f.asyncRequest("GET", "/oauth/install?"+url.Values{
 		"state": {install.Get("state")}, "code": {"blocked-install"},
-	}.Encode(), "")
+	}.Encode(), "", nil)
 	awaitProvider(t, f.exchanging, f.blockInstall)
 	f.install(install, "admin", http.StatusConflict)
 	f.request("DELETE", "/pairings/"+f.id, f.proof, nil, http.StatusNoContent, nil)
@@ -567,18 +567,19 @@ func TestOfficialPairingRevocationFencesInFlightExchanges(t *testing.T) {
 	f.install(f.start(installApp), "blocked-dm", http.StatusNoContent)
 	f.identity(f.start(signIn), "operator", http.StatusNoContent)
 	f.blockDM, f.resolving = make(chan struct{}), make(chan struct{})
-	result = f.asyncRequest("PUT", "/pairings/"+f.id, f.proof)
+	var inFlight pairingStatus
+	result = f.asyncRequest("PUT", "/pairings/"+f.id, f.proof, &inFlight)
 	awaitProvider(t, f.resolving, f.blockDM)
 	f.request("DELETE", "/pairings/"+f.id, f.proof, nil, http.StatusNoContent, nil)
 	close(f.blockDM)
-	if code := <-result; code != http.StatusOK {
-		t.Fatalf("fenced poll returned HTTP %d", code)
+	if code := <-result; code != http.StatusOK || inFlight.State != "reconnect_required" || inFlight.Binding != nil {
+		t.Fatalf("fenced poll returned HTTP %d and status %+v", code, inFlight)
 	}
 	f.restart()
 	f.poll("reconnect_required")
 }
 
-func (f *fixture) asyncRequest(method, path, proof string) <-chan int {
+func (f *fixture) asyncRequest(method, path, proof string, status *pairingStatus) <-chan int {
 	f.t.Helper()
 	req, err := http.NewRequest(method, f.server.URL+path, nil)
 	if err != nil {
@@ -595,7 +596,12 @@ func (f *fixture) asyncRequest(method, path, proof string) <-chan int {
 			done <- 0
 			return
 		}
-		res.Body.Close()
+		defer res.Body.Close()
+		if status != nil && res.StatusCode == http.StatusOK {
+			if err := json.NewDecoder(res.Body).Decode(status); err != nil {
+				f.t.Errorf("decode relay response: %v", err)
+			}
+		}
 		done <- res.StatusCode
 	}()
 	return done
@@ -630,4 +636,54 @@ func TestOfficialPairingRetriesWithFreshStateAfterExchangeFails(t *testing.T) {
 	}
 	f.install(f.start(installApp), "admin", http.StatusNoContent)
 	f.poll("ready_to_link")
+}
+
+func TestOfficialPairingExpiredCallbackClearsInstalledState(t *testing.T) {
+	f := newTestFixture(t)
+	f.poll("connecting")
+	f.install(f.start(installApp), "admin", http.StatusNoContent)
+	identity := f.start(signIn)
+	f.expire()
+	f.restart()
+	f.identity(identity, "operator", http.StatusConflict)
+	if f.identityExchanges.Load() != 0 {
+		t.Fatal("expired callback reached Slack token endpoint")
+	}
+	f.assertRetired()
+	f.poll("reconnect_required")
+}
+
+func TestOfficialPairingExpiresDuringTokenExchange(t *testing.T) {
+	f := newTestFixture(t)
+	f.poll("connecting")
+	f.identity(f.start(signIn), "operator", http.StatusNoContent)
+	install := f.start(installApp)
+	f.blockInstall, f.exchanging = make(chan struct{}), make(chan struct{})
+	result := f.asyncRequest("GET", "/oauth/install?"+url.Values{
+		"state": {install.Get("state")}, "code": {"blocked-install"},
+	}.Encode(), "", nil)
+	awaitProvider(t, f.exchanging, f.blockInstall)
+	f.expire()
+	close(f.blockInstall)
+	if code := <-result; code != http.StatusConflict {
+		t.Fatalf("expired callback returned HTTP %d", code)
+	}
+	f.assertRetired()
+	f.poll("reconnect_required")
+}
+
+func (f *fixture) assertRetired() {
+	f.t.Helper()
+	var scrubbed bool
+	err := f.db.QueryRow(context.Background(), `
+		SELECT revoked AND verified_workspace = '' AND verified_operator = '' AND installed_workspace = ''
+		    AND sealed_bot_token IS NULL AND dm_channel = '' AND NOT approval_pending
+		    AND NOT EXISTS (
+		        SELECT 1 FROM slack_relay_oauth_flows f WHERE f.app_id = p.app_id AND f.pairing_id = p.id
+		    )
+		FROM slack_relay_pairings p WHERE app_id = $1 AND id = $2
+	`, testApp, f.id).Scan(&scrubbed)
+	if err != nil || !scrubbed {
+		f.t.Fatalf("retirement did not clear pairing and OAuth state: %v", err)
+	}
 }

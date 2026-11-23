@@ -146,10 +146,11 @@ func (s pairingStore) pending(ctx context.Context, id, proof string) error {
 
 func (s pairingStore) consume(ctx context.Context, kind flowKind, state string) (flow, error) {
 	f := flow{kind: kind, stateHash: sha256.Sum256([]byte(state))}
+	var retired bool
 	err := pgx.BeginFunc(ctx, s.db, func(tx pgx.Tx) error {
 		err := tx.QueryRow(ctx, `
 			SELECT pairing_id FROM slack_relay_oauth_flows
-			WHERE app_id = $1 AND purpose = $2 AND state_hash = $3 AND NOT consumed
+			WHERE app_id = $1 AND purpose = $2 AND state_hash = $3
 		`, s.appID, kind, f.stateHash[:]).Scan(&f.pairingID)
 		if err != nil {
 			return err
@@ -158,8 +159,12 @@ func (s pairingStore) consume(ctx context.Context, kind flowKind, state string) 
 		if err != nil {
 			return err
 		}
-		if p.terminal() {
+		if p.revoked {
 			return errPairingState
+		}
+		if p.expired {
+			retired = true
+			return s.retire(ctx, tx, f.pairingID)
 		}
 		return tx.QueryRow(ctx, `
 			UPDATE slack_relay_oauth_flows SET consumed = true
@@ -167,20 +172,26 @@ func (s pairingStore) consume(ctx context.Context, kind flowKind, state string) 
 			RETURNING nonce
 		`, s.appID, f.pairingID, kind, f.stateHash[:]).Scan(&f.nonce)
 	})
-	if errors.Is(err, pgx.ErrNoRows) {
+	// Return a conflict only after any retirement has committed.
+	if (err == nil && retired) || errors.Is(err, pgx.ErrNoRows) {
 		err = errPairingState
 	}
 	return f, err
 }
 
 func (s pairingStore) complete(ctx context.Context, f flow, who identity, installed installation) error {
-	return pgx.BeginFunc(ctx, s.db, func(tx pgx.Tx) error {
+	var retired bool
+	err := pgx.BeginFunc(ctx, s.db, func(tx pgx.Tx) error {
 		p, err := s.lock(ctx, tx, f.pairingID)
 		if err != nil {
 			return err
 		}
-		if p.terminal() {
+		if p.revoked {
 			return errPairingState
+		}
+		if p.expired {
+			retired = true
+			return s.retire(ctx, tx, f.pairingID)
 		}
 		var current bool
 		err = tx.QueryRow(ctx, `
@@ -207,14 +218,25 @@ func (s pairingStore) complete(ctx context.Context, f flow, who identity, instal
 			p.workspace, p.pending = installed.workspace, false
 			p.sealedToken = s.tokens.Seal(nil, nil, []byte(installed.botToken), s.tokenScope(f.pairingID, p.workspace))
 		}
-		_, err = tx.Exec(ctx, `
+		tag, err := tx.Exec(ctx, `
 			UPDATE slack_relay_pairings
 			SET verified_workspace = $3, verified_operator = $4, installed_workspace = $5,
 			    sealed_bot_token = $6, approval_pending = $7
-			WHERE app_id = $1 AND id = $2
+			WHERE app_id = $1 AND id = $2 AND expires_at > clock_timestamp()
 		`, s.appID, f.pairingID, p.identity.Workspace, p.identity.Operator, p.workspace, p.sealedToken, p.pending)
-		return err
+		if err != nil {
+			return err
+		}
+		if tag.RowsAffected() == 0 {
+			retired = true
+			return s.retire(ctx, tx, f.pairingID)
+		}
+		return nil
 	})
+	if err == nil && retired {
+		return errPairingState
+	}
+	return err
 }
 
 func (s pairingStore) tokenScope(id, workspace string) []byte {
