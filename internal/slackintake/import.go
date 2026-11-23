@@ -15,6 +15,7 @@ import (
 const maxEventSize = 64 << 10
 
 var idPattern = regexp.MustCompile(`^[A-Z0-9]{2,64}$`)
+var eventIDPattern = regexp.MustCompile(`^[A-Za-z0-9]{2,64}$`)
 
 type event struct {
 	store.SlackBinding
@@ -45,19 +46,27 @@ func Import(ctx context.Context, tasks store.Tasks, binding store.SlackBinding, 
 	if err != nil {
 		return false, err
 	}
+	goal, err := authorizedGoal(binding, incoming)
+	if err != nil {
+		return false, err
+	}
+	return tasks.ImportSlack(ctx, binding, incoming.EventID, goal)
+}
+
+func authorizedGoal(binding store.SlackBinding, incoming event) (string, error) {
 	if incoming.SlackBinding != binding || incoming.Type != "message" || incoming.ChannelType != "im" ||
 		incoming.Bot == nil || *incoming.Bot || incoming.Subtype != "" {
-		return false, errors.New("event is outside the linked operator's private DM")
+		return "", errors.New("event is outside the linked operator's private DM")
 	}
-	if !idPattern.MatchString(incoming.EventID) {
-		return false, errors.New("invalid Slack event ID")
+	if !eventIDPattern.MatchString(incoming.EventID) {
+		return "", errors.New("invalid Slack event ID")
 	}
 	goal, ok := strings.CutPrefix(strings.TrimSpace(incoming.Text), "goal ")
 	goal = strings.TrimSpace(goal)
 	if !ok || goal == "" || strings.ContainsRune(goal, 0) || utf8.RuneCountInString(goal) > 4096 {
-		return false, errors.New("use goal followed by a task of up to 4096 characters")
+		return "", errors.New("use goal followed by a task of up to 4096 characters")
 	}
-	return tasks.ImportSlack(ctx, binding, incoming.EventID, goal)
+	return goal, nil
 }
 
 func readEvent(ctx context.Context, input io.Reader) (event, error) {

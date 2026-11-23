@@ -9,7 +9,10 @@ flowchart LR
     GitHubIntake -->|"Read installation scope and conversation comments"| GitHub["GitHub API"]
     GitHubIntake -->|"Save linked identity, source, cursor, and task"| Postgres
     Operator -->|"Supply an offline normalized DM event"| SlackImport["Local Slack intake harness"]
-    SlackImport -->|"Check the linked app, workspace, operator, and DM"| SlackBinding["Persisted Slack binding"]
+    Operator -->|"Start the private app connector"| SlackSocket["Private Slack Socket Mode connector"]
+    SlackSocket -->|"Open an authenticated WebSocket and acknowledge deliveries"| Slack["Slack"]
+    SlackSocket -->|"Map private DM goal events"| SlackBinding["Persisted Slack binding"]
+    SlackImport -->|"Check the linked app, workspace, operator, and DM"| SlackBinding
     SlackBinding -->|"Save event identity and local task atomically"| Postgres
     Browser -->|"Save decisions, submit goals, and review patches over loopback HTTP"| Server["difqo server"]
     Browser -->|"Select a project and start an approved specialist revision"| Server
@@ -56,10 +59,10 @@ Imported tasks use the same decision and patch-review flow as local goals.
 Workers opt into that repository's queue by numeric ID. See
 [ADR 0007](adr/0007-github-intake.md).
 
-The Slack intake harness accepts trusted normalized events on local stdin.
-It scopes intake to one linked private DM and records the event ID with
-the task. The official app and private Socket Mode transports can reuse
-this boundary once they authenticate events. See
+Private Slack app intake connects outbound over Socket Mode and maps direct
+messages to the same local binding used by the offline harness. Accepted
+goals commit before acknowledgement. The official app remains the planned
+default through a relay that can reuse the local intake rules. See
 [ADR 0009](adr/0009-local-slack-intake.md).
 
 ## Chief of Staff web app
