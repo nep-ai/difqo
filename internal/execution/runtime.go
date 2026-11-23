@@ -126,7 +126,8 @@ func (o Options) probeContainers(ctx context.Context, runtime containerRuntime) 
 	}
 
 	cmd := c.command(ctx, auth, "timeout", "-k", "2s", "10s", "sh", "-ec",
-		`test -r /codex-home/probe && test -w /codex-home
+		`test -r /codex-home/probe
+		test -w /codex-home
 		exec codex -c "$1" sandbox --permission-profile difqo -- sh -ec '
 			test ! -r /codex-home/probe && touch /workspace/sandbox-ready
 		'`, "difqo", codexPermissions)
