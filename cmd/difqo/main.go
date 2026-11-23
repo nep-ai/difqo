@@ -44,7 +44,9 @@ func run(args []string) error {
 		flags.StringVar(&artifactPath, "artifacts", "", "absolute path to the worker artifact directory")
 	case "worker":
 		repo = flags.String("repo", "", "path to a local Git checkout")
-		flags.StringVar(&options.Image, "codex-image", "", "local Docker image for Codex execution")
+		flags.StringVar(&options.Image, "codex-image", "", "local container image for Codex execution")
+		flags.StringVar(&options.Runtime, "container-runtime", "", "auto, docker, podman, or a compatible CLI executable (default auto)")
+		flags.BoolVar(&options.DisableSELinuxLabel, "container-selinux-label-disable", false, "opt out of Podman SELinux labeling for Codex containers")
 		flags.StringVar(&options.Check, "check", "", "shell command to run in the isolated checkout")
 		flags.StringVar(&options.ArtifactRoot, "artifacts", "", "absolute host path for execution artifacts")
 		flags.StringVar(&options.AuthHome, "codex-home", "", "absolute path to a dedicated private Codex home")

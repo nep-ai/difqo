@@ -55,27 +55,37 @@ The [architecture document](architecture.md) describes the current limitations.
 
 ## Bounded Codex execution
 
-Use a local Docker engine and a trusted synthetic Git checkout with a commit.
+Use a local Docker or Podman engine and a trusted synthetic Git checkout with a commit.
 Choose a check command that runs using tools available in the image. The
 operator supplies this command independently of the task goal.
 
+Pick the CLI and start its engine first. On macOS, start your Docker VM or use
+`podman machine start` for Podman. Use shared paths for both the artifact
+directory and the dedicated Codex home so the Linux engine can mount them at
+the same paths. Use the same engine and connection to build the image, sign in,
+and run the worker.
+
 ```sh
-docker build -t difqo-codex:0.171.0 containers/codex
+runtime=docker # Set to podman to use the native Podman CLI.
+"$runtime" build -t difqo-codex:0.171.0 containers/codex
 auth_home="$HOME/.local/share/difqo/codex-home"
 artifact_root="$HOME/.local/share/difqo/artifacts"
-mkdir -p "$auth_home"
+mkdir -p "$auth_home" "$artifact_root"
 chmod 700 "$auth_home"
-docker run --rm -it --user "$(id -u):$(id -g)" \
+set --
+if [ "$runtime" = podman ] && [ "$(podman info --format '{{.Host.Security.Rootless}}')" = true ]; then
+  set -- "--userns=keep-id:uid=$(id -u),gid=$(id -g)"
+fi
+"$runtime" run "$@" --rm -it --pull=never --user "$(id -u):$(id -g)" \
   --env HOME=/tmp --env CODEX_HOME=/codex-home \
   --mount "type=bind,src=$auth_home,dst=/codex-home" \
   difqo-codex:0.171.0 codex login -c 'cli_auth_credentials_store="file"' --device-auth
 ```
 
-Use a dedicated Codex home with its own ChatGPT sign-in. Configure the Docker
-engine to share the artifact root and that home with its Linux runtime when
-needed. The worker starts the App Server with a workspace-only permissions
-profile that denies tool access to the sign-in directory. The runtime must
-support the Linux sandbox used by the pinned Codex release.
+Use a dedicated Codex home with its own ChatGPT sign-in. The worker starts
+the App Server with a workspace-only permissions profile that denies tool
+access to the sign-in directory. The runtime must support the Linux sandbox
+used by the pinned Codex release.
 [Codex permissions](https://learn.chatgpt.com/docs/permissions).
 
 With the server running, submit a bounded goal and start one worker:
@@ -85,6 +95,7 @@ curl -fsS http://127.0.0.1:8765/tasks \
   -H 'Content-Type: application/json' \
   -d '{"goal":"Replace the contents of greeting.txt with the line after"}'
 ./bin/difqo worker -repo /path/to/disposable-checkout \
+  -container-runtime "$runtime" \
   -codex-image difqo-codex:0.171.0 -codex-home "$auth_home" \
   -artifacts "$artifact_root" -check 'test "$(cat greeting.txt)" = after'
 curl -fsS http://127.0.0.1:8765/tasks/1
@@ -99,6 +110,42 @@ sign-in produces `"status": "blocked"`. Sign in and submit a new task to retry.
 The worker allows up to three and a half minutes for the full host-side
 execution. App Server startup and turn failures can include a private
 `execution.log` with a fixed diagnostic selected from the error category.
+
+### Runtime selection and Linux sandbox setup
+
+Omit `-container-runtime` or set it to `auto` to try Docker first, then native
+Podman. The worker selects the first CLI whose engine is reachable, whose image
+is local, and whose containers pass the preflight. The probes check an offline
+workspace bind mount and start the real Codex sandbox with a test sign-in
+directory. They verify that the sandbox can write to the workspace and cannot
+read the test credential file. An explicit CLI selection fails on its own
+errors. If validation fails, the worker exits with a diagnostic before claiming
+a task. The worker uses the selected executable for the turn, diff, check, and
+cleanup.
+
+- **Docker.** The engine's outer seccomp and, where present, AppArmor profiles
+  must permit bubblewrap to create its nested user and mount namespaces. The
+  stock Docker policies can block that setup. Use an administrator-approved
+  policy scoped to the Codex container. A CLI wrapper can apply the profiles to
+  `run` invocations that contain `--env=CODEX_HOME=/codex-home` and forward all
+  other invocations unchanged. The [Go workflow](../.github/workflows/go.yml)
+  and [its wrapper](../scripts/fixtures/docker-codex-smoke) show the setup for
+  synthetic fixtures on a disposable runner.
+- **Podman.** Rootless execution uses `keep-id` with your host UID and GID.
+  Configure subordinate IDs and resource-limit support for local Linux rootless
+  engines. On SELinux hosts, give containers access to the dedicated bind
+  directories using your host's labeling policy. If SELinux blocks bubblewrap
+  from mounting its own `devpts` even with working bind mounts, you can opt in
+  to `-container-selinux-label-disable` on a trusted machine. The option disables
+  SELinux labeling for the Codex turn and its sandbox probe. The offline diff
+  and check containers retain the engine's labeling policy.
+- **Other compatible CLIs.** Pass one executable name or path to
+  `-container-runtime`. It must implement Docker-style `info`,
+  `image inspect IMAGE`, `run`, and `rm -f NAME`, including the run flags in
+  the [container adapter](../internal/execution/container.go). It must honor the
+  requested user, capability drop, read-only root, process and resource limits,
+  bind mounts, network isolation, pull policy, and stdin/stdout behavior. Use a
+  trusted executable or put any required fixed arguments in a wrapper.
 
 ## PostgreSQL smoke test
 
@@ -119,15 +166,25 @@ recovery, retry exhaustion, and result persistence. It uses `psql` to expire
 fixture leases without waiting and leaves the test records in the disposable
 database.
 
-To include the Docker checks, build the Codex image above and the synthetic App
-Server image below, then set `DIFQO_SMOKE_CODEX=1` when running the smoke script
-against a fresh migrated database. These checks use the real App Server to
-verify missing sign-in and a synthetic JSON-RPC turn to verify patch capture.
+To include container checks, build the Codex image above and the synthetic App
+Server image below with the selected runtime. Use a fresh migrated database for
+each run. These checks verify pre-claim rejection, the real App Server's missing
+sign-in status, a synthetic authenticated turn, container removal, and patch and
+log retrieval over HTTP.
 
 ```sh
-docker build -t difqo-codex-smoke -f scripts/fixtures/Dockerfile.codex-smoke scripts/fixtures
-DIFQO_SMOKE_CODEX=1 python3 scripts/postgres-smoke.py bin/difqo
+"$runtime" build -t difqo-codex-smoke -f scripts/fixtures/Dockerfile.codex-smoke scripts/fixtures
+DIFQO_SMOKE_CODEX=1 DIFQO_SMOKE_CONTAINER_RUNTIME="$runtime" \
+  python3 scripts/postgres-smoke.py bin/difqo
 ```
+
+Set `DIFQO_SMOKE_SELINUX_LABEL_DISABLE=1` if using the Podman SELinux option.
+For VM-backed engines, point `TMPDIR` at a directory shared with the engine
+if the default temporary directory is outside the file shares. To test a
+compatible executable, build with its underlying engine and set
+`DIFQO_SMOKE_CONTAINER_RUNTIME` to the executable path.
+When multiple worktrees share an engine, tag the synthetic image separately
+for each worktree and pass its tag as `DIFQO_SMOKE_FIXTURE_IMAGE`.
 
 ## Chief of Staff web app
 

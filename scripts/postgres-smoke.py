@@ -178,6 +178,10 @@ with TemporaryDirectory(prefix='difqo-smoke-') as scratch:
         print('Local smoke passed: fixed checks, exclusive claims, renewable leases, interrupted worker recovery, stale results, retry exhaustion, and restart persistence')
 
         if os.environ.get('DIFQO_SMOKE_CODEX') == '1':
+            runtime = os.environ.get('DIFQO_SMOKE_CONTAINER_RUNTIME', 'docker')
+            runtime_options = ['-container-runtime', runtime]
+            if os.environ.get('DIFQO_SMOKE_SELINUX_LABEL_DISABLE') == '1':
+                runtime_options.append('-container-selinux-label-disable')
             auth_home = Path(scratch) / 'codex-home'
             auth_home.mkdir(mode=0o700)
             greeting = fixture / 'greeting.txt'
@@ -187,29 +191,44 @@ with TemporaryDirectory(prefix='difqo-smoke-') as scratch:
                 '-c', 'user.email=smoke@example.invalid', '-c', 'commit.gpgSign=false',
                 'commit', '-qm', 'Add fixture greeting')
 
-            def run_codex(image):
+            def worker_args(image):
+                return [binary, 'worker', '-port', port, '-repo', fixture,
+                        '-codex-image', image, '-codex-home', auth_home, '-artifacts', artifacts,
+                        '-check', 'test "$(cat greeting.txt)" = after && printf "greeting check passed\\n"']
+
+            def containers():
+                return run(runtime, 'ps', '-a', '--filter', 'name=difqo-', '-q').splitlines()
+
+            def run_codex(image, verify_preflight=False):
                 status, submitted = api('/tasks', 'POST', {'goal': 'Replace the fixture greeting'})
                 assert status == 201
-                run(binary, 'worker', '-port', port, '-repo', fixture,
-                    '-codex-image', image, '-codex-home', auth_home, '-artifacts', artifacts,
-                    '-check', 'test "$(cat greeting.txt)" = after && printf "greeting check passed\\n"')
-                status, task = api(f"/tasks/{submitted['id']}")
+                path = f"/tasks/{submitted['id']}"
+                if verify_preflight:
+                    rejected = subprocess.run(
+                        worker_args('difqo-smoke-image-does-not-exist:missing') + runtime_options,
+                        capture_output=True, text=True, timeout=45,
+                    )
+                    assert rejected.returncode != 0 and 'unavailable locally' in rejected.stderr, rejected.stderr
+                    assert api(path) == (200, submitted)
+                before = set(containers())
+                subprocess.run(worker_args(image) + runtime_options, check=True, timeout=90)
+                assert set(containers()) <= before
+                status, task = api(path)
                 assert status == 200
                 return task
 
-            blocked = run_codex('difqo-codex:0.171.0')
+            blocked = run_codex('difqo-codex:0.171.0', verify_preflight=True)
             assert blocked['status'] == 'blocked', blocked
             assert blocked['attempt']['result'] == {
                 'exit_code': 125, 'output': 'Codex sign-in required', 'blocked': True,
             }
             assert list(artifacts.iterdir()) == []
 
-            executed = run_codex('difqo-codex-smoke')
+            executed = run_codex(os.environ.get('DIFQO_SMOKE_FIXTURE_IMAGE', 'difqo-codex-smoke'))
             assert executed['status'] == 'completed'
             outcome = executed['attempt']['result']
             assert outcome['exit_code'] == 0, outcome
             artifact_ref = outcome['artifacts']
-            assert not run('docker', 'ps', '-a', '--filter', f'name=difqo-{artifact_ref}', '-q').strip()
             evidence = artifacts / artifact_ref
             patch = (evidence / 'change.diff').read_text()
             assert '-before\n+after\n' in patch and '+new file\n' in patch
@@ -218,10 +237,13 @@ with TemporaryDirectory(prefix='difqo-smoke-') as scratch:
             with urllib.request.urlopen(evidence_url + 'change.diff', timeout=2) as response:
                 assert response.read().decode() == patch
                 assert response.headers.get_content_type() == 'text/plain'
+            with urllib.request.urlopen(evidence_url + 'check.log', timeout=2) as response:
+                assert response.read().decode() == 'greeting check passed\n'
             assert api(f"/tasks/{executed['id']}/evidence/auth.json")[0] == 404
             assert greeting.read_text() == 'before\n' and not (fixture / 'untracked.txt').exists()
             assert not (evidence / 'workspace').exists()
-            print('Docker smoke passed: real Codex sign-in block, synthetic turn, and evidence after container removal')
+            print(f'{runtime} smoke passed: pre-claim rejection, real Codex sign-in block, '
+                  'synthetic turn, container cleanup, and evidence retrieval')
     finally:
         server.terminate()
         server.wait(timeout=5)

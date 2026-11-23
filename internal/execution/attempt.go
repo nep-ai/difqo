@@ -10,16 +10,19 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
-	"time"
 
 	"github.com/nep-ai/difqo/internal/store"
 )
 
 type Options struct {
 	Image, Check, ArtifactRoot, AuthHome string
+	Runtime                              string
+	DisableSELinuxLabel                  bool
+	runtime                              containerRuntime
 }
 
 func (o *Options) Validate(repo string) error {
+	o.runtime = containerRuntime{}
 	if o.Image == "" || strings.HasPrefix(o.Image, "-") || strings.TrimSpace(o.Check) == "" {
 		return errors.New("Codex execution requires a local image and a check command")
 	}
@@ -46,19 +49,15 @@ func (o *Options) Validate(repo string) error {
 	if rel, err := filepath.Rel(authHome, o.ArtifactRoot); err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(os.PathSeparator)) {
 		return errors.New("use a dedicated Difqo Codex home")
 	}
-	if _, err := exec.LookPath("docker"); err != nil {
-		return errors.New("docker CLI is required for Codex execution")
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	if err := exec.CommandContext(ctx, "docker", "image", "inspect", o.Image).Run(); err != nil {
-		return errors.New("Docker must be running with the configured image available locally")
-	}
-	return nil
+	o.runtime, err = o.resolveRuntime()
+	return err
 }
 
 func (o Options) Run(ctx context.Context, repo string, task store.Task) store.Result {
 	failure := store.Result{ExitCode: 125, Output: "could not prepare isolated execution"}
+	if o.runtime.executable == "" {
+		return failure
+	}
 	if err := os.MkdirAll(o.ArtifactRoot, 0o700); err != nil {
 		return failure
 	}
@@ -85,7 +84,7 @@ func (o Options) Run(ctx context.Context, repo string, task store.Task) store.Re
 		return failure
 	}
 
-	c := container{name: "difqo-" + filepath.Base(dir), image: o.Image, workspace: workspace}
+	c := container{name: "difqo-" + filepath.Base(dir), image: o.Image, workspace: workspace, runtime: o.runtime}
 	if diagnostic, err := c.codex(ctx, o.AuthHome, task.Goal); err != nil {
 		if errors.Is(err, ErrAuthentication) {
 			return store.Result{ExitCode: 125, Output: "Codex sign-in required", Blocked: true}
