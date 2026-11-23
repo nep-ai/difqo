@@ -13,6 +13,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"syscall"
 	"time"
 
@@ -41,7 +42,7 @@ func run(args []string) error {
 	port := flags.Int("port", 8765, "loopback API port")
 	var repo *string
 	var githubRepositoryID int64
-	var webPath, artifactPath, projectsPath string
+	var webPath, artifactPath, projectsPath, workerProject, bindingVersion string
 	var options execution.Options
 	switch args[0] {
 	case "server":
@@ -51,6 +52,8 @@ func run(args []string) error {
 		flags.StringVar(&options.Runtime, "container-runtime", "", "auto, docker, podman, or a compatible CLI executable for review reruns (default auto)")
 	case "worker":
 		repo = flags.String("repo", "", "path to a local Git checkout")
+		flags.StringVar(&workerProject, "project", "", "claim snapshot-review runs for this registered project")
+		flags.StringVar(&bindingVersion, "binding-version", "", "binding version of the registered project checkout")
 		flags.Int64Var(&githubRepositoryID, "github-repository-id", 0, "claim tasks for this enrolled GitHub repository only")
 		flags.StringVar(&options.Image, "codex-image", "", "local container image for Codex execution")
 		flags.StringVar(&options.Runtime, "container-runtime", "", "auto, docker, podman, or a compatible CLI executable (default auto)")
@@ -80,6 +83,19 @@ func run(args []string) error {
 		}
 		ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 		defer cancel()
+		var project store.SpecialistProject
+		if workerProject != "" || bindingVersion != "" {
+			version := strings.TrimSpace(bindingVersion)
+			if !projectID.MatchString(workerProject) || version == "" || len(version) > 128 || options != (execution.Options{}) {
+				return errors.New("a specialist worker requires -project and -binding-version with its checkout and uses the snapshot review profile")
+			}
+			checkout, binding, err := resolveBinding(*repo, version)
+			if err != nil {
+				return errors.New("could not validate the specialist worker checkout")
+			}
+			*repo = checkout
+			project = store.SpecialistProject{ID: workerProject, Binding: binding}
+		}
 		var runOptions *execution.Options
 		if options != (execution.Options{}) {
 			resolved, err := filepath.Abs(*repo)
@@ -92,7 +108,7 @@ func run(args []string) error {
 			}
 			runOptions = &options
 		}
-		return worker.Run(ctx, "http://"+address, *repo, runOptions, githubRepositoryID)
+		return worker.Run(ctx, "http://"+address, *repo, runOptions, githubRepositoryID, project)
 	}
 
 	dsn := os.Getenv("DIFQO_DATABASE_URL")

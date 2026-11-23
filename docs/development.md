@@ -255,8 +255,34 @@ expected output, select the projects it may serve, and review the proposal.
 The specialist is saved locally when you approve it. Use **Inspect a specialist**
 to see its current approved configuration, propose an update, or review a
 disable request. A single profile covers snapshot review for all approved
-projects. Specialist execution and run history are tracked in
-[#20](https://github.com/nep-ai/difqo/issues/20).
+projects.
+
+### Start and inspect a specialist run
+
+In **Project decision**, select the named project to save its decision. Ordinary
+goals use their existing decision scope. A specialist run pins the latest
+decision for the selected checkout binding when it enters the queue.
+
+In **Specialists**, inspect an enabled specialist and open **Run this
+specialist**. Select one approved project, enter the goal, and choose
+**Start run**. Invoke a worker for that project's exact checkout and binding
+version:
+
+```sh
+./bin/difqo worker -project reports -binding-version 1 -repo /path/to/reports
+```
+
+The snapshot-review profile reports committed file changes and tracked files,
+with the requested goal and saved decision as context. It uses local Git reads.
+No provider credentials or container configuration are needed. The worker
+claims one run for that binding per invocation. Ordinary workers continue to
+claim ordinary goals.
+
+Open **View attempt history** from the goal's project file to inspect results
+and earlier expired attempts. An expired attempt can be reclaimed by a matching
+worker while the project remains authorized. Removing scope or disabling the
+specialist blocks new starts and claims. Active attempts can finish. Manual
+retry, pause, cancellation, and other execution profiles are later work.
 
 ## Local GitHub comment intake
 

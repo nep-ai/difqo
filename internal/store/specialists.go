@@ -145,14 +145,8 @@ func (s Specialists) Eligible(ctx context.Context, specialistID int64, projectID
 	if err != nil {
 		return false, err
 	}
-	if current.Enabled && current.Config.Profile == specialistProfile && current.Config.Access == specialistAccess {
-		for _, project := range current.Config.Projects {
-			if project.ID == projectID && s.hasBinding(project) {
-				return true, nil
-			}
-		}
-	}
-	return false, nil
+	project, found := s.Project(projectID)
+	return found && authorizesProject(current, project), nil
 }
 
 func (s Specialists) hasBinding(project SpecialistProject) bool {

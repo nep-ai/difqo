@@ -54,18 +54,36 @@ func loadProjects(path string) ([]store.SpecialistProject, error) {
 			version == "" || len(version) > 128 || !filepath.IsAbs(entry.Checkout) {
 			return nil, fmt.Errorf("invalid or duplicate project binding at catalog entry %d", i+1)
 		}
-		checkout, err := filepath.EvalSymlinks(entry.Checkout)
-		if err != nil {
-			return nil, fmt.Errorf("could not resolve checkout at catalog entry %d", i+1)
-		}
-		root, err := exec.Command("git", "-C", checkout, "rev-parse", "--show-toplevel").Output()
-		if err != nil || strings.TrimSuffix(string(root), "\n") != checkout || paths[checkout] {
+		checkout, binding, err := resolveBinding(entry.Checkout, version)
+		if err != nil || paths[checkout] {
 			return nil, fmt.Errorf("catalog entry %d requires a distinct Git checkout root", i+1)
 		}
 		ids[entry.ID] = true
 		paths[checkout] = true
-		binding := sha256.Sum256([]byte(checkout + "\x00" + version))
-		projects = append(projects, store.SpecialistProject{ID: entry.ID, Name: name, Label: filepath.Base(checkout) + " · " + version, Binding: hex.EncodeToString(binding[:])})
+		projects = append(projects, store.SpecialistProject{ID: entry.ID, Name: name, Label: filepath.Base(checkout) + " · " + version, Binding: binding})
 	}
 	return projects, nil
+}
+
+func resolveBinding(path, version string) (string, string, error) {
+	absolute, err := filepath.Abs(path)
+	if err != nil {
+		return "", "", err
+	}
+	checkout, err := filepath.EvalSymlinks(absolute)
+	if err != nil {
+		return "", "", err
+	}
+	cmd := exec.Command("git", "-C", checkout, "rev-parse", "--show-toplevel")
+	for _, variable := range cmd.Environ() {
+		if !strings.HasPrefix(variable, "GIT_") {
+			cmd.Env = append(cmd.Env, variable)
+		}
+	}
+	root, err := cmd.Output()
+	if err != nil || strings.TrimSuffix(string(root), "\n") != checkout {
+		return "", "", errors.New("project binding requires a Git checkout root")
+	}
+	binding := sha256.Sum256([]byte(checkout + "\x00" + version))
+	return checkout, hex.EncodeToString(binding[:]), nil
 }

@@ -13,6 +13,8 @@ const statuses = {
   completed: 'Completed',
   blocked: 'Blocked',
   exhausted: 'Attempt limit reached',
+  interrupted: 'Lease expired',
+  failed: 'Failed',
 }
 
 function Mark() {
@@ -176,6 +178,8 @@ function PatchReview({ goal }) {
 
 function ProjectDecision({ dialog }) {
   const [body, setBody] = useState('')
+  const [projects, setProjects] = useState([])
+  const [scope, setScope] = useState('')
   const [revision, setRevision] = useState(null)
   const [loading, setLoading] = useState(false)
   const [ready, setReady] = useState(false)
@@ -183,16 +187,25 @@ function ProjectDecision({ dialog }) {
   const [error, setError] = useState('')
   const pendingLoad = useRef(null)
 
-  async function load() {
+  function decisionPath(project) {
+    return project ? '/project-decision?' + new URLSearchParams({ project: project.id, binding: project.binding }) : '/project-decision'
+  }
+
+  async function load(project, open = false) {
     pendingLoad.current?.abort()
     const controller = new AbortController()
     pendingLoad.current = controller
-    dialog.current.showModal()
+    if (open) dialog.current.showModal()
+    setScope(project?.id ?? '')
     setLoading(true)
     setReady(false)
     setError('')
     try {
-      const response = await request('/project-decision', { signal: controller.signal })
+      if (open) {
+        const catalog = await request('/specialist-projects', { signal: controller.signal })
+        setProjects(await catalog.json())
+      }
+      const response = await request(decisionPath(project), { signal: controller.signal })
       const current = response.status === 204 ? null : await response.json()
       if (controller.signal.aborted) return
       setBody(current?.body ?? '')
@@ -211,7 +224,7 @@ function ProjectDecision({ dialog }) {
     setSaving(true)
     setError('')
     try {
-      await request('/project-decision', {
+      await request(decisionPath(projects.find(project => project.id === scope)), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ body }),
@@ -225,13 +238,19 @@ function ProjectDecision({ dialog }) {
   }
 
   return <>
-    <button type="button" className="decision-trigger" onClick={load}>Project decision</button>
+    <button type="button" className="decision-trigger" onClick={() => load(null, true)}>Project decision</button>
     <dialog ref={dialog} aria-labelledby="decision-title" onCancel={event => {
       if (saving) event.preventDefault()
       else pendingLoad.current?.abort()
     }}>
       <h2 id="decision-title">Project decision</h2>
-      <p>New goals use the latest saved revision.</p>
+      <p>New runs use the latest saved decision for their project.</p>
+      {projects.length > 0 && <label className="specialist-field">Decision scope
+        <select value={scope} disabled={saving || loading} onChange={event => load(projects.find(project => project.id === event.target.value))}>
+          <option value="">Ordinary goals</option>
+          {projects.map(project => <option key={project.id} value={project.id}>{project.name} ({project.id})</option>)}
+        </select>
+      </label>}
       <form onSubmit={save}>
         <label htmlFor="decision-body">{revision ? 'Decision · Revision ' + revision : 'Decision'}</label>
         <textarea id="decision-body" rows={5} maxLength={4096} value={body}
@@ -250,6 +269,54 @@ function ProjectDecision({ dialog }) {
   </>
 }
 
+function AttemptHistory({ goal }) {
+  const [open, setOpen] = useState(false)
+  const [history, setHistory] = useState(null)
+  const [error, setError] = useState(false)
+  const [refresh, retry] = useState(0)
+
+  useEffect(() => {
+    if (!open) return
+    const controller = new AbortController()
+    let timer
+    async function load() {
+      try {
+        const response = await request('/specialist-runs/' + goal.id + '/attempts', { signal: controller.signal })
+        const data = await response.json()
+        if (controller.signal.aborted) return
+        setHistory(data)
+        setError(false)
+      } catch {
+        if (!controller.signal.aborted) setError(true)
+      } finally {
+        if (!controller.signal.aborted && (goal.status === 'queued' || goal.status === 'claimed')) {
+          timer = setTimeout(load, 3000)
+        }
+      }
+    }
+    load()
+    return () => {
+      controller.abort()
+      clearTimeout(timer)
+    }
+  }, [goal.id, goal.status, goal.attempt?.id, open, refresh])
+
+  return <details className="review" onToggle={event => setOpen(event.currentTarget.open)}>
+    <summary>View attempt history</summary>
+    {error && <p role="alert">Couldn’t load attempts. <button className="subtle" onClick={() => retry(value => value + 1)}>Retry</button></p>}
+    {open && !history && !error && <p role="status">Loading attempts…</p>}
+    {history && <>
+      {!history.claimable && goal.status !== 'completed' && <p>Project authorization has changed. This run cannot be claimed again.</p>}
+      {history.attempts.length === 0 && <p>No attempts have been recorded.</p>}
+      {history.attempts.map(attempt => <details key={attempt.id}>
+        <summary>Attempt {attempt.number} · {statuses[attempt.status] ?? attempt.status}</summary>
+        {attempt.status === 'interrupted' && <p>The worker did not report a result before its lease expired.</p>}
+        {attempt.result && <><p>Exit code {attempt.result.exit_code}</p><pre className="specialist-report">{attempt.result.output}</pre></>}
+      </details>)}
+    </>}
+  </details>
+}
+
 function ProjectFile({ goal }) {
   const result = goal.attempt?.result
   const completed = goal.status === 'completed'
@@ -261,14 +328,17 @@ function ProjectFile({ goal }) {
       <h2>{goal.goal}</h2>
       <span className={'badge ' + (failed ? 'failure' : goal.status === 'blocked' ? 'attention' : completed ? 'good' : '')} role="status">{status}</span>
     </div>
-    {goal.status === 'queued' && <p>The goal is saved. Waiting for a local worker to pick it up.</p>}
+    {goal.specialist_run && <p>{goal.specialist_run.project.name} ({goal.specialist_run.project.id}) · {goal.specialist_run.name} · Revision {goal.specialist_run.revision}</p>}
+    {goal.specialist_run && <p>{goal.decision ? 'Saved decision revision ' + goal.decision.id : 'No saved decision for this project.'}</p>}
+    {goal.status === 'queued' && <p>{goal.specialist_run ? 'Waiting for a worker bound to this project.' : 'The goal is saved. Waiting for a local worker to pick it up.'}</p>}
     {goal.status === 'claimed' && <p>The local worker is running this goal.</p>}
     {goal.status === 'blocked' && <p>Restore Codex sign-in in the worker’s execution environment, then submit the goal again.</p>}
     {goal.status === 'exhausted' && <p>Check that a local worker is available before submitting this goal again.</p>}
-    {result && <dl className="facts">
+    {result && !goal.specialist_run && <dl className="facts">
       <dt>Worker result</dt><dd>{result.output || 'No output was recorded.'}</dd>
       <dt>Exit code</dt><dd><code>{result.exit_code}</code></dd>
     </dl>}
+    {goal.specialist_run && <AttemptHistory goal={goal} />}
     {result?.snapshot && <PatchReview goal={goal} key={goal.attempt.id} />}
     {result?.artifacts && !result.snapshot && <details className="review" key={goal.attempt.id}>
       <summary>View run evidence</summary>
@@ -279,7 +349,7 @@ function ProjectFile({ goal }) {
   </section>
 }
 
-function Chat({ goals, connection, submit }) {
+function Chat({ goals, connection, submit, addTask }) {
   const [draft, setDraft] = useState('')
   const [showSpecialists, setShowSpecialists] = useState(false)
   const specialistTrigger = useRef(null)
@@ -336,7 +406,7 @@ function Chat({ goals, connection, submit }) {
       <h2>What would you like to get done?</h2>
       <p>Give the Chief of Staff a goal. You’ll see what the local worker did and what evidence is available here.</p>
     </section>}
-    {showSpecialists && <Specialists request={request} mark={<Mark />} close={() => {
+    {showSpecialists && <Specialists request={request} mark={<Mark />} onQueued={addTask} close={() => {
       setShowSpecialists(false)
       specialistTrigger.current?.focus()
     }} />}
@@ -403,7 +473,10 @@ function App() {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ goal }),
     })
-    const saved = await response.json()
+    addTask(await response.json())
+  }
+
+  function addTask(saved) {
     generation.current++
     setGoals(current => current.some(item => item.id === saved.id) ? current : [...current, saved].slice(-100))
   }
@@ -419,7 +492,7 @@ function App() {
       </div>
     </header>
     {connection === 'offline' && <p className="connection-note" role="status">Couldn’t reach the local service. Check that Difqo and PostgreSQL are running. This page reconnects automatically.</p>}
-    <Chat goals={goals} connection={connection} submit={submit} />
+    <Chat goals={goals} connection={connection} submit={submit} addTask={addTask} />
     <dialog ref={dialog} aria-labelledby="service-title">
       <h2 id="service-title">Local service</h2>
       <p>Goals are stored by Difqo in PostgreSQL. A local worker claims and runs them. Start another worker invocation when you want it to take another queued goal.</p>

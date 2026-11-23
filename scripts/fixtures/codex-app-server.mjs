@@ -23,8 +23,10 @@ for await (const line of responses) {
       }
       respond({ thread: { id: 'synthetic-thread' } });
       break;
-    case 'turn/start':
-      if (request.params.input[0].text !== 'Saved project decision (revision 1):\nUse the line after in greeting.txt.\n\nTask goal:\nReplace the fixture greeting') {
+    case 'turn/start': {
+      // Earlier smoke scenarios can save other revisions in the same database.
+      const decision = /^Saved project decision \(revision [1-9]\d*\):\n/.exec(request.params.input[0].text);
+      if (!decision || request.params.input[0].text.slice(decision[0].length) !== 'Use the line after in greeting.txt.\n\nTask goal:\nReplace the fixture greeting') {
         throw new Error('Unexpected task goal or decision revision');
       }
       if (readFileSync('greeting.txt', 'utf8') !== 'before\n') {
@@ -37,6 +39,7 @@ for await (const line of responses) {
         threadId: 'synthetic-thread', turn: { id: 'synthetic-turn', status: 'completed' },
       } });
       break;
+    }
     default:
       throw new Error(`Unexpected method ${request.method}`);
   }

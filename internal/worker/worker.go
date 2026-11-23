@@ -15,20 +15,33 @@ import (
 	"github.com/nep-ai/difqo/internal/store"
 )
 
-func Run(ctx context.Context, address string, repo string, executionOptions *execution.Options, githubRepositoryID int64) error {
+func Run(ctx context.Context, address string, repo string, executionOptions *execution.Options, githubRepositoryID int64, project store.SpecialistProject) error {
 	client := &http.Client{Timeout: 10 * time.Second}
 	var task store.Task
-	claim := struct {
+	endpoint := "/tasks/claim"
+	var claim any = struct {
 		GitHubRepositoryID int64 `json:"github_repository_id,omitempty"`
 	}{githubRepositoryID}
-	err := request(ctx, client, "POST", address+"/tasks/claim", claim, &task)
+	if project.ID != "" {
+		endpoint = "/specialist-runs/claim"
+		claim = struct {
+			Project string `json:"project"`
+			Binding string `json:"binding"`
+		}{Project: project.ID, Binding: project.Binding}
+	}
+	err := request(ctx, client, "POST", address+endpoint, claim, &task)
 	if err != nil || task.Attempt == nil {
 		return err
 	}
 
 	attemptURL := fmt.Sprintf("%s/attempts/%d", address, task.Attempt.ID)
 	var result store.Result
-	if executionOptions == nil {
+	if project.ID != "" {
+		if task.Run == nil || task.Run.Project.ID != project.ID || task.Run.Project.Binding != project.Binding {
+			return errors.New("claimed run does not match the worker project binding")
+		}
+		result = execution.ReviewProjectSnapshot(ctx, repo, task)
+	} else if executionOptions == nil {
 		result = checkHead(ctx, repo)
 	} else {
 		runCtx, cancel := context.WithTimeout(ctx, 210*time.Second)

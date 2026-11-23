@@ -27,8 +27,10 @@ var artifactSuffix = regexp.MustCompile(`^[0-9]+$`)
 
 func Handler(tasks store.Tasks, web fs.FS, artifacts *os.Root, runtimeChoice string, projects []store.SpecialistProject) http.Handler {
 	router := http.NewServeMux()
-	registerSpecialists(router, store.Specialists{DB: tasks.DB, Projects: projects})
-	registerDecisions(router, tasks)
+	specialists := store.Specialists{DB: tasks.DB, Projects: projects}
+	registerSpecialists(router, specialists)
+	registerRuns(router, tasks, specialists)
+	registerDecisions(router, tasks, specialists)
 
 	if web != nil {
 		router.HandleFunc("GET /{$}", func(w http.ResponseWriter, r *http.Request) {

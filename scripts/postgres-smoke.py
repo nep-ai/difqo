@@ -41,6 +41,12 @@ with TemporaryDirectory(prefix='difqo-smoke-') as scratch:
         checkout = Path(scratch) / project
         checkout.mkdir()
         run('git', '-C', checkout, 'init', '-q', '--template=')
+        filename = f'{project}-only.txt'
+        (checkout / filename).write_text(project)
+        run('git', '-C', checkout, 'add', '--', filename)
+        run('git', '-C', checkout, '-c', 'user.name=Difqo Smoke',
+            '-c', 'user.email=smoke@example.invalid', '-c', 'commit.gpgSign=false',
+            'commit', '-qm', 'Synthetic project snapshot')
         projects.append({'id': project, 'name': f'Sample {project.title()}', 'checkout': str(checkout),
                          'binding_version': '1'})
     catalog = Path(scratch) / 'projects.json'
@@ -108,6 +114,23 @@ with TemporaryDirectory(prefix='difqo-smoke-') as scratch:
         assert status == 200
         return body
 
+    def run_input(specialist, revision, project):
+        return {'request_id': str(uuid4()), 'goal': f'Review {project["id"]} snapshot', 'specialist_id': specialist,
+                'revision': revision, 'project': project['id'], 'binding': project['binding']}
+
+    def claim_project(project):
+        return api('/specialist-runs/claim', 'POST', {'project': project['id'], 'binding': project['binding']})
+
+    def run_project_worker(project):
+        entry = next(entry for entry in projects if entry['id'] == project)
+        run(binary, 'worker', '-port', port, '-repo', entry['checkout'], '-project', project,
+            '-binding-version', entry['binding_version'])
+
+    def run_history(task):
+        status, history = api(f'/specialist-runs/{task["id"]}/attempts')
+        assert status == 200
+        return history
+
     server = start()
     try:
         assert api('/tasks') == (200, [])
@@ -135,12 +158,58 @@ with TemporaryDirectory(prefix='difqo-smoke-') as scratch:
         assert eligible(specialist, 'reports') and eligible(specialist, 'billing')
         assert not eligible(specialist, 'inventory')
 
+        reports, billing, inventory = specialist_state()['projects']
+        assert api('/specialist-projects') == (200, [reports, billing, inventory])
+        for project in (reports, billing, inventory):
+            path = f'/project-decision?project={project["id"]}&binding={project["binding"]}'
+            assert api(path, 'POST', {'body': f'{project["id"]}-decision-v1'})[0] == 201
+        assert api('/project-decision') == (204, None)
+        assert api('/project-decision?project=reports&binding=wrong', 'POST', {'body': 'Reject stale binding'})[0] == 409
+        assert api('/specialist-runs', 'POST', run_input(specialist, 1, inventory))[0] == 403
+        assert api('/tasks') == (200, [])
+        started = {}
+        for project in (reports, billing):
+            payload = run_input(specialist, 1, project)
+            status, task = api('/specialist-runs', 'POST', payload)
+            assert status == 201, status
+            assert api('/specialist-runs', 'POST', payload) == (201, task)
+            assert api('/specialist-runs', 'POST', payload | {'goal': 'Different goal'})[0] == 409
+            assert task['specialist_run']['specialist_id'] == specialist
+            assert task['specialist_run']['revision'] == 1
+            assert task['specialist_run']['project'] == project
+            assert task['decision']['body'] == f'{project["id"]}-decision-v1'
+            started[project['id']] = task
+        assert api('/tasks/claim', 'POST', {}) == (204, None)
+        assert claim_project(inventory) == (204, None)
+        assert api('/specialist-runs/claim', 'POST', {'project': 'reports', 'binding': billing['binding']})[0] == 403
+        status, interrupted_run = claim_project(reports)
+        assert status == 200 and interrupted_run['id'] == started['reports']['id']
+        expire(interrupted_run['attempt'])
+        assert api(f'/project-decision?project=reports&binding={reports["binding"]}',
+                   'POST', {'body': 'reports-decision-v2'})[0] == 201
+        for project in (reports, billing):
+            run_project_worker(project['id'])
+            task = started[project['id']]
+            history = run_history(task)
+            expected_statuses = ['interrupted', 'completed'] if project == reports else ['completed']
+            assert [attempt['status'] for attempt in history['attempts']] == expected_statuses, history
+            output = history['attempts'][-1]['result']['output']
+            assert f'{project["id"]}-only.txt' in output and f'{project["id"]}-decision-v1' in output
+            for other in ('reports', 'billing', 'inventory'):
+                if other != project['id']:
+                    assert f'{other}-only.txt' not in output and f'{other}-decision-v1' not in output
+            assert 'reports-decision-v2' not in output
+        status, revoked_run = api('/specialist-runs', 'POST', run_input(specialist, 1, billing))
+        assert status == 201
+        status, retained_run = api('/specialist-runs', 'POST', run_input(specialist, 1, reports))
+        assert status == 201
+
         _, revise = propose('update', specialist, 1, scope=['inventory'])
         assert not eligible(specialist, 'inventory')
         assert decide(revise, 'revise')[0] == 200
         assert decide(revise)[0] == 409
-        _, first = propose('update', specialist, 1, scope=['reports', 'inventory'])
-        _, second = propose('update', specialist, 1, scope=['reports', 'inventory'])
+        _, first = propose('update', specialist, 1, scope=['reports', 'inventory'], purpose='New specialist purpose')
+        _, second = propose('update', specialist, 1, scope=['reports', 'inventory'], purpose='New specialist purpose')
         with ThreadPoolExecutor(max_workers=2) as pool:
             outcomes = list(pool.map(decide, [first, second]))
         assert sorted(status for status, _ in outcomes) == [200, 409]
@@ -148,6 +217,19 @@ with TemporaryDirectory(prefix='difqo-smoke-') as scratch:
         assert eligible(specialist, 'reports') and eligible(specialist, 'inventory')
         assert not eligible(specialist, 'billing')
         assert any(p['outcome'] == 'stale' for p in specialist_state()['proposals'])
+
+        assert claim_project(billing) == (204, None)
+        assert run_history(revoked_run) == {'claimable': False, 'attempts': []}
+        run_project_worker('reports')
+        retained, = run_history(retained_run)['attempts']
+        assert retained['status'] == 'completed'
+        assert 'Specialist purpose: Review test coverage' in retained['result']['output']
+        assert 'New specialist purpose' not in retained['result']['output']
+        assert api('/specialist-runs', 'POST', run_input(specialist, 1, reports))[0] == 403
+        status, rebound_run = api('/specialist-runs', 'POST', run_input(specialist, 2, reports))
+        assert status == 201
+        status, disabled_run = api('/specialist-runs', 'POST', run_input(specialist, 2, inventory))
+        assert status == 201
 
         _, stale_binding = propose('update', specialist, 2)
         server.terminate()
@@ -158,6 +240,8 @@ with TemporaryDirectory(prefix='difqo-smoke-') as scratch:
         assert not eligible(specialist, 'reports')
         assert eligible(specialist, 'inventory')
         assert decide(stale_binding)[0] == 409
+        assert claim_project(reports)[0] == 403
+        assert run_history(rebound_run) == {'claimable': False, 'attempts': []}
         _, cancel = propose('disable', specialist, 2)
         assert decide(cancel, 'decline')[0] == 200
         assert eligible(specialist, 'inventory')
@@ -172,7 +256,10 @@ with TemporaryDirectory(prefix='difqo-smoke-') as scratch:
         assert not state['specialists'][0]['enabled']
         assert not any(eligible(specialist, p['id']) for p in projects)
         assert sum(p['outcome'] == 'approve' and p['action'] != 'disable' for p in state['proposals']) == 2
-        assert api('/tasks') == (200, [])
+        assert claim_project(inventory) == (204, None)
+        assert run_history(disabled_run) == {'claimable': False, 'attempts': []}
+        assert len(run_history(started['reports'])['attempts']) == 2
+        print('Specialist run smoke passed: project-isolated results, pinned decisions and revisions, denied dispatch, and retry history')
         print('Specialist smoke passed: scoped eligibility, revision conflicts, rebinding, disable, and restart')
         assert api('/tasks', 'POST', {'goal': '  '})[0] == 400
         assert api('/tasks', 'POST', {'goal': 'Reject cross-origin dispatch'}, headers={
@@ -186,7 +273,9 @@ with TemporaryDirectory(prefix='difqo-smoke-') as scratch:
         assert status == 200
         result = {'exit_code': 0, 'output': expected}
         assert completed['attempt']['result'] == result
-        assert api('/tasks') == (200, [completed])
+        recent_status, recent = api('/tasks')
+        assert recent_status == 200
+        assert [task for task in recent if 'specialist_run' not in task] == [completed]
         assert api(f"/tasks/{task['id']}/evidence/change.diff")[0] == 404
         path = f"/attempts/{completed['attempt']['id']}/result"
         assert api(path, 'PUT', result)[0] == 204
