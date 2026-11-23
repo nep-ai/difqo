@@ -36,11 +36,14 @@ and approval state. [Local Slack intake ADR](0009-local-slack-intake.md)
    workspace, workspace-level installation, and required bot scopes.
    An installing admin's OAuth identity is install metadata. It grants
    the admin no access to the operator's pairing or DM. For inbound, start
-   with `im:history` and `im:write`, subscribe to `message.im`, and use
-   `conversations.open` with exactly the verified operator ID to resolve the
-   bot's DM. Confirm the returned conversation ID and DM type before enabling
-   intake. Request the permission to post messages when replies ship.
+   with `im:history`, `im:write`, and `chat:write`. Enable user messages in
+   the App Home Messages tab, which requires `chat:write`, and subscribe to
+   `message.im`. Use `conversations.open` with exactly the verified operator
+   ID to resolve the bot's DM. Confirm the returned conversation ID and DM
+   type before enabling intake. The initial relay uses this scope set for
+   inbound setup and delivery. Posting replies is a later feature.
    [Slack OAuth installation](https://docs.slack.dev/authentication/installing-with-oauth/) ·
+   [App Home Messages tab](https://docs.slack.dev/surfaces/app-home/) ·
    [Direct-message events](https://docs.slack.dev/reference/events/message.im/) ·
    [Open a DM](https://docs.slack.dev/reference/methods/conversations.open/)
 4. **Confirm locally.** Once the relay has a matching installation and
@@ -88,7 +91,10 @@ pairing. Org-wide installations are outside the first workspace-level slice.
   retention policy. Local repositories, evidence, task state, and
   approvals remain on the local machine.
 - Verify the Slack signature against the bounded raw HTTPS body and check
-  the signed request's timestamp before decoding. Derive app, workspace,
+  the signed request's timestamp before decoding. For a verified
+  `url_verification` request, return HTTP 200 with the plaintext `challenge`
+  before applying workspace or DM binding checks. This startup handshake
+  does not create a task or a delivery record. Derive app, workspace,
   sender, and conversation from that verified event. The relay acknowledges
   accepted events after durable queue insertion, within Slack's delivery
   deadline. Discard well-formed events outside the active exact binding.
@@ -97,6 +103,7 @@ pairing. Org-wide installations are outside the first workspace-level slice.
   the authenticated relay to attest Slack origin and independently checks
   the active app, workspace, operator, DM, and binding generation.
   [Verify Slack requests](https://docs.slack.dev/authentication/verifying-requests-from-slack/) ·
+  [Events URL verification](https://docs.slack.dev/reference/events/url_verification/) ·
   [Slack event delivery and retries](https://docs.slack.dev/apis/events-api/#responding-to-events)
 - Batch delivery over outbound HTTPS. Local receipt follows the transaction
   that records the event and shared local task. A lost acknowledgement
@@ -117,8 +124,8 @@ pairing. Org-wide installations are outside the first workspace-level slice.
 | Slice | Synthetic acceptance |
 | --- | --- |
 | Local binding lifecycle | With fake relay statuses, restart each side during connect and resume with the same pairing. A second instance, reused or expired state, the wrong workspace, or an installing admin trying to claim the pairing cannot activate intake. Cancel and disconnect revoke the current generation. Prove private and official modes are mutually exclusive in one local database and keep tasks and replay history when switching. |
-| Relay identity and install | Mock Slack callbacks and code exchanges. Cover identity and install succeeding in either order, pending approval with no callback, user cancellation, app or workspace mismatch, unsupported org installation, missing scope, replayed callbacks, and reconnect after revocation. Admin installation can satisfy the workspace prerequisite but only the verified local operator can link their DM. |
-| Inbound delivery | Send signed synthetic events, stale or invalid signatures, and events from a second workspace, user, and DM. Verify one authorized goal and zero unauthorized tasks. Retry after relay restart and simulated loss of the local receipt. Each event creates one task bound to the existing saved decision. Simulate a disconnect with delivery in flight and verify the retired generation cannot import it. GitHub intake and the private Socket Mode fixtures still pass. |
+| Relay identity and install | Mock Slack callbacks and code exchanges. Cover identity and install succeeding in either order, pending approval with no callback, user cancellation, app or workspace mismatch, unsupported org installation, missing Messages tab scopes, replayed callbacks, and reconnect after revocation. Admin installation can satisfy the workspace prerequisite but only the verified local operator can link their DM. |
+| Inbound delivery | Echo a valid signed URL challenge with no binding and verify only a successful response. Reject unsigned or stale challenges. Send signed synthetic events, stale or invalid signatures, and events from a second workspace, user, and DM. Verify one authorized goal and zero unauthorized tasks. Retry after relay restart and simulated loss of the local receipt. Each event creates one task bound to the existing saved decision. Simulate a disconnect with delivery in flight and verify the retired generation cannot import it. GitHub intake and the private Socket Mode fixtures still pass. |
 | UI and live acceptance | On fake endpoints, exercise pending, installed-but-unlinked, connected, offline, revoked, and reconnect from Chief of Staff. Enable the entry point for real users only after the official test app and relay can complete the flow. With owner authorization, verify in one approved test workspace that only the linked operator's DM creates a local, reviewable task. Later slices cover status, cancellation, action-specific approval, and replay-safe replies. |
 
 The current singleton binding preserves a private app's IDs and has no
