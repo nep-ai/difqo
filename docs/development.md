@@ -401,6 +401,7 @@ permission to create a schema.
 
 ```sh
 python3 scripts/slack-connection-smoke.py bin/difqo
+DIFQO_SLACK_TEST_DATABASE_URL="$DIFQO_DATABASE_URL" go test -count=1 ./internal/store
 ```
 
 For local development, start `difqo server -slack-relay-fixture
