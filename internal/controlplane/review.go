@@ -48,7 +48,7 @@ func registerDecisions(router *http.ServeMux, tasks store.Tasks, specialists sto
 		if !ok {
 			return
 		}
-		decision, err := tasks.SaveDecision(r.Context(), body, project)
+		decision, err := tasks.SaveProjectDecision(r.Context(), body, project)
 		if err != nil {
 			storeError(w, err)
 			return

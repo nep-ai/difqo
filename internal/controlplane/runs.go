@@ -62,7 +62,7 @@ func registerRuns(router *http.ServeMux, tasks store.Tasks, specialists store.Sp
 			http.Error(w, "worker checkout binding does not match a registered project", http.StatusForbidden)
 			return
 		}
-		task, err := tasks.Claim(r.Context(), project)
+		task, err := tasks.ClaimProject(r.Context(), project)
 		switch {
 		case errors.Is(err, sql.ErrNoRows):
 			w.WriteHeader(http.StatusNoContent)

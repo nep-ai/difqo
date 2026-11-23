@@ -3,8 +3,10 @@ package execution
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"os/exec"
+	"sort"
 	"strings"
 	"time"
 
@@ -54,8 +56,28 @@ func ReviewProjectSnapshot(ctx context.Context, repo string, task store.Task) st
 			return store.Result{ExitCode: 125, Output: "Could not list files in the selected project snapshot."}
 		}
 	}
+	return snapshotResult(output.String(), truncated)
+}
+
+func snapshotResult(output string, truncated bool) store.Result {
+	// Bound the encoded result below the result endpoint's 64 KiB limit,
+	// including context and JSON escaping, and retain whole UTF-8 characters.
+	const maxEncodedBytes = 60 << 10
+	const notice = "\nSnapshot report truncated.\n"
+	output = strings.ToValidUTF8(output, "�")
+	result := store.Result{Output: output}
 	if truncated {
-		output.WriteString("\nSnapshot report truncated.\n")
+		result.Output += notice
 	}
-	return store.Result{Output: strings.ToValidUTF8(output.String(), "�")}
+	data, _ := json.Marshal(result)
+	if len(data) <= maxEncodedBytes {
+		return result
+	}
+	runes := []rune(output)
+	firstTooLong := sort.Search(len(runes)+1, func(n int) bool {
+		data, _ := json.Marshal(store.Result{Output: string(runes[:n]) + notice})
+		return len(data) > maxEncodedBytes
+	})
+	result.Output = string(runes[:firstTooLong-1]) + notice
+	return result
 }

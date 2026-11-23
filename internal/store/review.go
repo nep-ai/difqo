@@ -18,7 +18,11 @@ func (s Tasks) LatestDecision(ctx context.Context, project SpecialistProject) (D
 	return d, err
 }
 
-func (s Tasks) SaveDecision(ctx context.Context, body string, project SpecialistProject) (Decision, error) {
+func (s Tasks) SaveDecision(ctx context.Context, body string) (Decision, error) {
+	return s.SaveProjectDecision(ctx, body, SpecialistProject{})
+}
+
+func (s Tasks) SaveProjectDecision(ctx context.Context, body string, project SpecialistProject) (Decision, error) {
 	d := Decision{Body: body}
 	err := s.DB.QueryRowContext(ctx, "INSERT INTO project_decisions (body, project_id, project_binding) VALUES ($1, $2, $3) RETURNING id", body, project.ID, project.Binding).Scan(&d.ID)
 	return d, err

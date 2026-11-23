@@ -278,12 +278,27 @@ function AttemptHistory({ goal }) {
   useEffect(() => {
     if (!open) return
     const controller = new AbortController()
-    setError(false)
-    request('/specialist-runs/' + goal.id + '/attempts', { signal: controller.signal })
-      .then(response => response.json())
-      .then(data => { if (!controller.signal.aborted) setHistory(data) })
-      .catch(() => { if (!controller.signal.aborted) setError(true) })
-    return () => controller.abort()
+    let timer
+    async function load() {
+      try {
+        const response = await request('/specialist-runs/' + goal.id + '/attempts', { signal: controller.signal })
+        const data = await response.json()
+        if (controller.signal.aborted) return
+        setHistory(data)
+        setError(false)
+      } catch {
+        if (!controller.signal.aborted) setError(true)
+      } finally {
+        if (!controller.signal.aborted && (goal.status === 'queued' || goal.status === 'claimed')) {
+          timer = setTimeout(load, 3000)
+        }
+      }
+    }
+    load()
+    return () => {
+      controller.abort()
+      clearTimeout(timer)
+    }
   }, [goal.id, goal.status, goal.attempt?.id, open, refresh])
 
   return <details className="review" onToggle={event => setOpen(event.currentTarget.open)}>

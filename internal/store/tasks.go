@@ -44,10 +44,16 @@ type Tasks struct {
 }
 
 func (s Tasks) Create(ctx context.Context, goal string) (Task, error) {
+	return createTask(ctx, s.DB, goal)
+}
+
+func createTask(ctx context.Context, db interface {
+	QueryRowContext(context.Context, string, ...any) *sql.Row
+}, goal string) (Task, error) {
 	task := Task{Goal: goal, Status: "queued"}
 	var decisionID *int64
 	var decisionBody *string
-	err := s.DB.QueryRowContext(ctx, `
+	err := db.QueryRowContext(ctx, `
 		WITH saved AS (
 			INSERT INTO tasks (goal, decision_id)
 			VALUES ($1, (SELECT id FROM project_decisions WHERE project_id = '' ORDER BY id DESC LIMIT 1))
@@ -134,16 +140,24 @@ func scanTask(row interface{ Scan(...any) error }) (Task, error) {
 	return task, err
 }
 
-func (s Tasks) Claim(ctx context.Context, project SpecialistProject) (Task, error) {
+func (s Tasks) Claim(ctx context.Context, githubRepositoryID int64) (Task, error) {
+	return s.claimFor(ctx, githubRepositoryID, SpecialistProject{})
+}
+
+func (s Tasks) ClaimProject(ctx context.Context, project SpecialistProject) (Task, error) {
+	return s.claimFor(ctx, 0, project)
+}
+
+func (s Tasks) claimFor(ctx context.Context, githubRepositoryID int64, project SpecialistProject) (Task, error) {
 	for {
-		task, retry, err := s.claim(ctx, project)
+		task, retry, err := s.claim(ctx, githubRepositoryID, project)
 		if !retry {
 			return task, err
 		}
 	}
 }
 
-func (s Tasks) claim(ctx context.Context, project SpecialistProject) (Task, bool, error) {
+func (s Tasks) claim(ctx context.Context, githubRepositoryID int64, project SpecialistProject) (Task, bool, error) {
 	tx, err := s.DB.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelReadCommitted})
 	if err != nil {
 		return Task{}, false, err
@@ -156,12 +170,13 @@ func (s Tasks) claim(ctx context.Context, project SpecialistProject) (Task, bool
 		LEFT JOIN specialist_runs sr ON sr.task_id = t.id
 		LEFT JOIN specialist_revisions pinned ON (pinned.specialist_id, pinned.revision) = (sr.specialist_id, sr.revision)
 		LEFT JOIN specialist_proposals approved ON approved.id = pinned.proposal_id
+		LEFT JOIN github_task_sources g ON g.task_id = t.id
 		LEFT JOIN LATERAL (
 			SELECT attempt_number, lease_expires_at, completed_at
 			FROM attempts WHERE task_id = t.id ORDER BY attempt_number DESC LIMIT 1
 		) a ON true
-		WHERE ((sr.task_id IS NULL AND $2 = '') OR (
-			sr.project->>'id' = $2 AND sr.project->>'binding' = $3
+		WHERE ((sr.task_id IS NULL AND $2 = '' AND COALESCE(g.repository_id, 0) = $6) OR (
+			g.task_id IS NULL AND sr.project->>'id' = $2 AND sr.project->>'binding' = $3
 			AND approved.configuration->>'profile' = $4 AND approved.configuration->>'access' = $5
 			AND EXISTS (
 				SELECT 1 FROM specialists s
@@ -176,7 +191,7 @@ func (s Tasks) claim(ctx context.Context, project SpecialistProject) (Task, bool
 			AND a.attempt_number < $1
 		))
 		ORDER BY t.id LIMIT 1 FOR UPDATE OF t SKIP LOCKED`,
-		maxAttempts, project.ID, project.Binding, specialistProfile, specialistAccess).Scan(&taskID)
+		maxAttempts, project.ID, project.Binding, specialistProfile, specialistAccess, githubRepositoryID).Scan(&taskID)
 	if err != nil {
 		return Task{}, false, err
 	}

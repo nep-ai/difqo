@@ -15,11 +15,13 @@ import (
 	"github.com/nep-ai/difqo/internal/store"
 )
 
-func Run(ctx context.Context, address string, repo string, executionOptions *execution.Options, project store.SpecialistProject) error {
+func Run(ctx context.Context, address string, repo string, executionOptions *execution.Options, githubRepositoryID int64, project store.SpecialistProject) error {
 	client := &http.Client{Timeout: 10 * time.Second}
 	var task store.Task
 	endpoint := "/tasks/claim"
-	var claim any = struct{}{}
+	var claim any = struct {
+		GitHubRepositoryID int64 `json:"github_repository_id,omitempty"`
+	}{githubRepositoryID}
 	if project.ID != "" {
 		endpoint = "/specialist-runs/claim"
 		claim = struct {
