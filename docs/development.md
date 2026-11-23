@@ -390,3 +390,29 @@ test also covers simultaneous delivery and replay after restart.
 This command accepts events from a trusted local source. Official Connect
 Slack, DM control actions, and replies are tracked in
 [#11](https://github.com/nep-ai/difqo/issues/11).
+
+
+## Official Slack binding lifecycle fixture
+
+On a disposable PostgreSQL instance, run the following from the repository
+root after building the local binary. The smoke test applies the migrations in
+a temporary schema and uses a fake loopback relay. The database role needs
+permission to create a schema.
+
+```sh
+python3 scripts/slack-connection-smoke.py bin/difqo
+```
+
+For local development, start `difqo server -slack-relay-fixture
+http://127.0.0.1:PORT` with a fixture at that numeric loopback origin.
+`GET /slack/connection` returns local state. JSON POSTs to the same endpoint
+support `begin`, `refresh`, `confirm`, `disconnect`, and `enable_private`.
+Refresh uses the pairing ID. Confirm also requires the exact reviewed
+binding. Disconnect uses the current generation and pairing ID if present.
+Enabling the saved private mode requires the disconnected generation.
+
+The fixture handles `PUT /pairings/{id}` with the local service's generated
+pairing proof. The response supplies a state and, when available, the
+verified workspace and operator, installed workspace, and candidate binding.
+The server keeps the fixture proof out of local API responses. The public
+Connect Slack UI and hosted relay belong to later slices.

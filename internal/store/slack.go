@@ -31,21 +31,38 @@ func readSlackBinding(row *sql.Row, binding SlackBinding) error {
 	return nil
 }
 
-func (s Tasks) CheckSlackBinding(ctx context.Context, binding SlackBinding) error {
-	err := readSlackBinding(s.DB.QueryRowContext(ctx, slackBindingQuery), binding)
-	if errors.Is(err, sql.ErrNoRows) {
-		return nil
+func (s Tasks) CheckSlackBinding(ctx context.Context, binding SlackBinding) (int64, error) {
+	state, err := s.SlackConnection(ctx)
+	if err != nil {
+		return 0, err
 	}
-	return err
+	if state.Mode != "private" || (state.Private != nil && *state.Private != binding) {
+		return 0, ErrSlackBinding
+	}
+	return state.Generation, nil
 }
 
 // ImportSlack atomically creates a local task and its Slack event identity.
 func (s Tasks) ImportSlack(ctx context.Context, binding SlackBinding, eventID, goal string) (bool, error) {
+	return s.ImportPrivateSlack(ctx, binding, eventID, goal, 0)
+}
+
+// ImportPrivateSlack can fence a long-lived connector to its startup generation.
+func (s Tasks) ImportPrivateSlack(ctx context.Context, binding SlackBinding, eventID, goal string, generation int64) (bool, error) {
 	tx, err := s.DB.BeginTx(ctx, nil)
 	if err != nil {
 		return false, err
 	}
 	defer tx.Rollback()
+	var mode string
+	var current int64
+	if err := tx.QueryRowContext(ctx, `SELECT mode, generation FROM slack_connection WHERE singleton FOR UPDATE`).
+		Scan(&mode, &current); err != nil {
+		return false, err
+	}
+	if mode != "private" || (generation != 0 && current != generation) {
+		return false, ErrSlackBinding
+	}
 	if _, err := tx.ExecContext(ctx, `
 		INSERT INTO slack_intake_binding (app_id, workspace_id, operator_id, channel_id)
 		VALUES ($1, $2, $3, $4) ON CONFLICT (singleton) DO NOTHING`,

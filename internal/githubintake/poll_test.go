@@ -213,7 +213,7 @@ func TestGitHubPostgres(t *testing.T) {
 	if _, err := poll(ctx, api.Client(), api.URL, changed, tasks); !errors.Is(err, store.ErrGitHubEnrollment) {
 		t.Fatalf("replacing the linked owner returned %v", err)
 	}
-	handler := controlplane.Handler(tasks, nil, nil, "", nil)
+	handler := controlplane.Handler(tasks, nil, nil, "", nil, nil)
 	claim := func(body string) *httptest.ResponseRecorder {
 		res := httptest.NewRecorder()
 		req := httptest.NewRequestWithContext(ctx, http.MethodPost, "/tasks/claim", strings.NewReader(body))

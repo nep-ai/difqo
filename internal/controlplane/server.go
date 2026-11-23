@@ -19,18 +19,22 @@ import (
 	"unicode/utf8"
 
 	"github.com/nep-ai/difqo/internal/execution"
+	"github.com/nep-ai/difqo/internal/slackintake"
 
 	"github.com/nep-ai/difqo/internal/store"
 )
 
 var artifactSuffix = regexp.MustCompile(`^[0-9]+$`)
 
-func Handler(tasks store.Tasks, web fs.FS, artifacts *os.Root, runtimeChoice string, projects []store.SpecialistProject) http.Handler {
+func Handler(tasks store.Tasks, web fs.FS, artifacts *os.Root, runtimeChoice string, projects []store.SpecialistProject, slack *slackintake.Connections) http.Handler {
 	router := http.NewServeMux()
 	specialists := store.Specialists{DB: tasks.DB, Projects: projects}
 	registerSpecialists(router, specialists)
 	registerRuns(router, tasks, specialists)
 	registerDecisions(router, tasks, specialists)
+	if slack != nil {
+		registerSlackConnection(router, slack)
+	}
 
 	if web != nil {
 		router.HandleFunc("GET /{$}", func(w http.ResponseWriter, r *http.Request) {

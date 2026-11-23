@@ -88,7 +88,7 @@ func RunSocketMode(ctx context.Context, tasks store.Tasks, binding store.SlackBi
 		return errors.New("provide a Slack app-level token in DIFQO_SLACK_APP_TOKEN")
 	}
 	checkCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
-	err := tasks.CheckSlackBinding(checkCtx, binding)
+	generation, err := tasks.CheckSlackBinding(checkCtx, binding)
 	cancel()
 	if err != nil {
 		if errors.Is(err, store.ErrSlackBinding) {
@@ -102,7 +102,10 @@ func RunSocketMode(ctx context.Context, tasks store.Tasks, binding store.SlackBi
 	client := &http.Client{CheckRedirect: func(*http.Request, []*http.Request) error {
 		return http.ErrUseLastResponse
 	}}
-	return runSocketMode(ctx, client, binding, token, tasks.ImportSlack, 2*time.Second)
+	return runSocketMode(ctx, client, binding, token,
+		func(ctx context.Context, binding store.SlackBinding, eventID, goal string) (bool, error) {
+			return tasks.ImportPrivateSlack(ctx, binding, eventID, goal, generation)
+		}, 2*time.Second)
 }
 
 func runSocketMode(ctx context.Context, client *http.Client, binding store.SlackBinding, token string,
