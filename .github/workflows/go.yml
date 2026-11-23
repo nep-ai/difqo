@@ -86,5 +86,6 @@ jobs:
           docker exec -i "$POSTGRES_CONTAINER" psql -U postgres -d difqo_smoke -v ON_ERROR_STOP=1 < migrations/0002_attempt_leases.sql
           docker exec -i "$POSTGRES_CONTAINER" psql -U postgres -d difqo_smoke -v ON_ERROR_STOP=1 < migrations/0003_execution_evidence.sql
           docker exec -i "$POSTGRES_CONTAINER" psql -U postgres -d difqo_smoke -v ON_ERROR_STOP=1 < migrations/0004_patch_review.sql
+          docker exec -i "$POSTGRES_CONTAINER" psql -U postgres -d difqo_smoke -v ON_ERROR_STOP=1 < migrations/0005_specialists.sql
           DIFQO_DATABASE_URL="postgres://postgres:smoke-test@127.0.0.1:${POSTGRES_PORT}/difqo_smoke?sslmode=disable" \
             python3 scripts/postgres-smoke.py bin/difqo

@@ -25,8 +25,9 @@ import (
 
 var artifactSuffix = regexp.MustCompile(`^[0-9]+$`)
 
-func Handler(tasks store.Tasks, web fs.FS, artifacts *os.Root, runtimeChoice string) http.Handler {
+func Handler(tasks store.Tasks, web fs.FS, artifacts *os.Root, runtimeChoice string, projects []store.SpecialistProject) http.Handler {
 	router := http.NewServeMux()
+	registerSpecialists(router, store.Specialists{DB: tasks.DB, Projects: projects})
 	registerDecisions(router, tasks)
 
 	if web != nil {

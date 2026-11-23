@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState } from 'react'
 import { createRoot } from 'react-dom/client'
 import '@fontsource-variable/geist/wght.css'
 import '@fontsource/barlow-condensed/latin-600.css'
+import { Specialists } from './specialists.jsx'
 import './style.css'
 
 const api = import.meta.env.DEV ? '/api' : ''
@@ -280,6 +281,8 @@ function ProjectFile({ goal }) {
 
 function Chat({ goals, connection, submit }) {
   const [draft, setDraft] = useState('')
+  const [showSpecialists, setShowSpecialists] = useState(false)
+  const specialistTrigger = useRef(null)
   const [sending, setSending] = useState(false)
   const [error, setError] = useState('')
   const composer = useRef(null)
@@ -333,6 +336,10 @@ function Chat({ goals, connection, submit }) {
       <h2>What would you like to get done?</h2>
       <p>Give the Chief of Staff a goal. You’ll see what the local worker did and what evidence is available here.</p>
     </section>}
+    {showSpecialists && <Specialists request={request} mark={<Mark />} close={() => {
+      setShowSpecialists(false)
+      specialistTrigger.current?.focus()
+    }} />}
     <div className="composer">
       <form onSubmit={send}>
         {error && <p className="submit-error" role="alert">{error}</p>}
@@ -349,7 +356,11 @@ function Chat({ goals, connection, submit }) {
           <button className="primary" disabled={!draft.trim() || sending || connection !== 'ready'}>{sending ? 'Sending…' : 'Send'}</button>
         </div>
       </form>
-      <div className="composer-meta"><ProjectDecision dialog={decisionDialog} /><span>Shift + Enter for a new line</span></div>
+      <div className="composer-meta"><div className="specialist-actions">
+        <ProjectDecision dialog={decisionDialog} />
+        <button className="subtle" type="button" ref={specialistTrigger} aria-expanded={showSpecialists}
+          onClick={() => setShowSpecialists(open => !open)}>Specialists</button>
+      </div><span>Shift + Enter for a new line</span></div>
     </div>
   </main>
 }

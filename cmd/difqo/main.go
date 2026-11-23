@@ -36,10 +36,11 @@ func run(args []string) error {
 	flags := flag.NewFlagSet(args[0], flag.ContinueOnError)
 	port := flags.Int("port", 8765, "loopback API port")
 	var repo *string
-	var webPath, artifactPath string
+	var webPath, artifactPath, projectsPath string
 	var options execution.Options
 	switch args[0] {
 	case "server":
+		flags.StringVar(&projectsPath, "projects", "", "path to the local project catalog JSON file")
 		flags.StringVar(&webPath, "web", "", "path to the built local web UI")
 		flags.StringVar(&artifactPath, "artifacts", "", "absolute path to the worker artifact directory")
 		flags.StringVar(&options.Runtime, "container-runtime", "", "auto, docker, podman, or a compatible CLI executable for review reruns (default auto)")
@@ -119,7 +120,11 @@ func run(args []string) error {
 		}
 		defer artifacts.Close()
 	}
-	handler := http.NewCrossOriginProtection().Handler(controlplane.Handler(store.Tasks{DB: db}, web, artifacts, options.Runtime))
+	projects, err := loadProjects(projectsPath)
+	if err != nil {
+		return err
+	}
+	handler := http.NewCrossOriginProtection().Handler(controlplane.Handler(store.Tasks{DB: db}, web, artifacts, options.Runtime, projects))
 	server := &http.Server{
 		Addr: address,
 		Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

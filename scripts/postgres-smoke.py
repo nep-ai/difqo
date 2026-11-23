@@ -4,6 +4,7 @@ from datetime import datetime
 from hashlib import sha256
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from uuid import uuid4
 import json
 import os
 import signal
@@ -35,6 +36,16 @@ with TemporaryDirectory(prefix='difqo-smoke-') as scratch:
     artifacts = Path(scratch) / 'artifacts'
     artifacts.mkdir(mode=0o700)
 
+    projects = []
+    for project in ('reports', 'billing', 'inventory'):
+        checkout = Path(scratch) / project
+        checkout.mkdir()
+        run('git', '-C', checkout, 'init', '-q', '--template=')
+        projects.append({'id': project, 'name': f'Sample {project.title()}', 'checkout': str(checkout),
+                         'binding_version': '1'})
+    catalog = Path(scratch) / 'projects.json'
+    catalog.write_text(json.dumps(projects))
+
     with closing(socket.socket()) as reserved:
         reserved.bind(('127.0.0.1', 0))
         port = str(reserved.getsockname()[1])
@@ -57,7 +68,7 @@ with TemporaryDirectory(prefix='difqo-smoke-') as scratch:
 
     def start():
         server = subprocess.Popen([binary, 'server', '-port', port, '-artifacts', artifacts,
-                                   '-container-runtime', runtime])
+                                   '-container-runtime', runtime, '-projects', catalog])
         for _ in range(300):
             try:
                 if api('/tasks/1')[0] in (200, 404):
@@ -76,9 +87,93 @@ with TemporaryDirectory(prefix='difqo-smoke-') as scratch:
             '-c', 'UPDATE attempts SET lease_expires_at = clock_timestamp() '
             f"WHERE id = {int(attempt['id'])}")
 
+    def propose(action='create', specialist=0, revision=0, scope=('reports', 'billing'), **fields):
+        draft = {'id': str(uuid4()), 'action': action, 'specialist_id': specialist,
+                 'base_revision': revision, 'name': 'Coverage reviewer', 'purpose': 'Review test coverage',
+                 'output': 'Coverage findings', 'projects': scope} | fields
+        status, proposal = api('/specialist-proposals', 'POST', draft)
+        assert status == 201, (status, draft)
+        return draft, proposal
+
+    def decide(proposal, outcome='approve', **fields):
+        return api(f"/specialist-proposals/{proposal['id']}/decision", 'POST', {'outcome': outcome} | fields)
+
+    def eligible(specialist, project):
+        status, body = api(f'/specialists/{specialist}/eligibility?project={project}')
+        assert status == 200
+        return body['eligible']
+
+    def specialist_state():
+        status, body = api('/specialists')
+        assert status == 200
+        return body
+
     server = start()
     try:
         assert api('/tasks') == (200, [])
+        assert [project['id'] for project in specialist_state()['projects']] == ['reports', 'billing', 'inventory']
+        _, declined = propose(name='Declined')
+        assert decide(declined, 'decline')[0] == 200
+        assert specialist_state()['specialists'] == []
+        draft, proposal = propose()
+        assert api('/specialist-proposals', 'POST', draft) == (201, proposal)
+        assert api('/specialist-proposals', 'POST', draft | {'name': 'Changed content'})[0] == 409
+        assert api('/specialist-proposals', 'POST', draft | {'id': str(uuid4()), 'projects': ['unknown']})[0] == 400
+        assert decide(proposal, projects=['inventory'])[0] == 400
+        status, approval = decide(proposal)
+        assert status == 200
+        specialist = approval['specialist_id']
+        assert decide(proposal) == (200, approval)
+        assert eligible(specialist, 'reports') and eligible(specialist, 'billing')
+        assert not eligible(specialist, 'inventory')
+        assert api('/tasks') == (200, [])
+        server.terminate()
+        server.wait(timeout=5)
+        server = start()
+        current, = specialist_state()['specialists']
+        assert current['id'] == specialist and current['revision'] == 1
+        assert eligible(specialist, 'reports') and eligible(specialist, 'billing')
+        assert not eligible(specialist, 'inventory')
+
+        _, revise = propose('update', specialist, 1, scope=['inventory'])
+        assert not eligible(specialist, 'inventory')
+        assert decide(revise, 'revise')[0] == 200
+        assert decide(revise)[0] == 409
+        _, first = propose('update', specialist, 1, scope=['reports', 'inventory'])
+        _, second = propose('update', specialist, 1, scope=['reports', 'inventory'])
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            outcomes = list(pool.map(decide, [first, second]))
+        assert sorted(status for status, _ in outcomes) == [200, 409]
+        assert specialist_state()['specialists'][0]['revision'] == 2
+        assert eligible(specialist, 'reports') and eligible(specialist, 'inventory')
+        assert not eligible(specialist, 'billing')
+        assert any(p['outcome'] == 'stale' for p in specialist_state()['proposals'])
+
+        _, stale_binding = propose('update', specialist, 2)
+        server.terminate()
+        server.wait(timeout=5)
+        projects[0]['binding_version'] = '2'
+        catalog.write_text(json.dumps(projects))
+        server = start()
+        assert not eligible(specialist, 'reports')
+        assert eligible(specialist, 'inventory')
+        assert decide(stale_binding)[0] == 409
+        _, cancel = propose('disable', specialist, 2)
+        assert decide(cancel, 'decline')[0] == 200
+        assert eligible(specialist, 'inventory')
+        _, pending_update = propose('update', specialist, 2)
+        _, disable = propose('disable', specialist, 2)
+        assert decide(disable)[0] == 200
+        assert decide(pending_update)[0] == 409
+        server.terminate()
+        server.wait(timeout=5)
+        server = start()
+        state = specialist_state()
+        assert not state['specialists'][0]['enabled']
+        assert not any(eligible(specialist, p['id']) for p in projects)
+        assert sum(p['outcome'] == 'approve' and p['action'] != 'disable' for p in state['proposals']) == 2
+        assert api('/tasks') == (200, [])
+        print('Specialist smoke passed: scoped eligibility, revision conflicts, rebinding, disable, and restart')
         assert api('/tasks', 'POST', {'goal': '  '})[0] == 400
         assert api('/tasks', 'POST', {'goal': 'Reject cross-origin dispatch'}, headers={
             'Content-Type': 'application/json', 'Sec-Fetch-Site': 'cross-site',

@@ -13,7 +13,8 @@ set -a
 set +a
 psql "$DIFQO_DATABASE_URL" -v ON_ERROR_STOP=1 \
   -f migrations/0001_tasks.sql -f migrations/0002_attempt_leases.sql \
-  -f migrations/0003_execution_evidence.sql -f migrations/0004_patch_review.sql
+  -f migrations/0003_execution_evidence.sql -f migrations/0004_patch_review.sql \
+  -f migrations/0005_specialists.sql
 go build -o bin/difqo ./cmd/difqo
 ./bin/difqo server
 ```
@@ -156,7 +157,8 @@ database, and run:
 ```sh
 psql "$DIFQO_DATABASE_URL" -v ON_ERROR_STOP=1 \
   -f migrations/0001_tasks.sql -f migrations/0002_attempt_leases.sql \
-  -f migrations/0003_execution_evidence.sql -f migrations/0004_patch_review.sql
+  -f migrations/0003_execution_evidence.sql -f migrations/0004_patch_review.sql \
+  -f migrations/0005_specialists.sql
 python3 scripts/postgres-smoke.py bin/difqo
 ```
 
@@ -230,3 +232,30 @@ exception for the Codex sandbox. Keep the shallow base and patch in the artifact
 for reruns. A changed patch file is treated as unavailable. Submit a new goal
 to review a different patch or use a different saved decision. Evidence
 captured before migration 0004 is still viewable from **View run evidence**.
+
+### Configure specialists for local projects
+
+Register checkouts in a local JSON file and start the server with
+`-projects /path/to/projects.json`. Use a stable ID, a display name, an absolute
+Git checkout root, and a binding version for each project. Keep this file local
+to the operator. For example:
+
+```json
+[
+  {"id":"reports","name":"Sample Reports","checkout":"/path/to/reports","binding_version":"1"},
+  {"id":"billing","name":"Sample Billing","checkout":"/path/to/billing","binding_version":"1"}
+]
+```
+
+Restart the server after editing the catalog. Advance the binding version when
+replacing a checkout in place. Moving a checkout, changing its binding version,
+or removing it makes the earlier binding ineligible. Review a new specialist
+proposal to approve the new binding.
+
+Open **Specialists** in the Chief of Staff conversation. Describe the role and
+expected output, select the projects it may serve, and review the proposal.
+The specialist is saved locally when you approve it. Use **Inspect a specialist**
+to see its current approved configuration, propose an update, or review a
+disable request. A single profile covers snapshot review for all approved
+projects. Specialist execution and run history are tracked in
+[#20](https://github.com/nep-ai/difqo/issues/20).
