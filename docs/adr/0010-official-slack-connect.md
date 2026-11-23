@@ -125,6 +125,7 @@ pairing. Org-wide installations are outside the first workspace-level slice.
 | --- | --- |
 | Local binding lifecycle | With fake relay statuses, restart each side during connect and resume with the same pairing. A second instance, reused or expired state, the wrong workspace, or an installing admin trying to claim the pairing cannot activate intake. Cancel and disconnect revoke the current generation. Prove private and official modes are mutually exclusive in one local database and keep tasks and replay history when switching. |
 | Relay identity and install | Mock Slack callbacks and code exchanges. Cover identity and install succeeding in either order, pending approval with no callback, user cancellation, app or workspace mismatch, unsupported org installation, missing Messages tab scopes, replayed callbacks, and reconnect after revocation. Admin installation can satisfy the workspace prerequisite but only the verified local operator can link their DM. |
+| Durable relay pairing | Recreate the relay and its database pool between start, callback, and poll. An unused callback remains usable and a consumed, replaced, expired, or revoked callback cannot reach the token exchange. Persist pending approval and preserve operator versus installer identity. Revoke while a callback or DM lookup is in flight and verify the old pairing stays retired across restart. |
 | Inbound delivery | Echo a valid signed URL challenge with no binding and verify only a successful response. Reject unsigned or stale challenges. Send signed synthetic events, stale or invalid signatures, and events from a second workspace, user, and DM. Verify one authorized goal and zero unauthorized tasks. Retry after relay restart and simulated loss of the local receipt. Each event creates one task bound to the existing saved decision. Simulate a disconnect with delivery in flight and verify the retired generation cannot import it. GitHub intake and the private Socket Mode fixtures still pass. |
 | UI and live acceptance | On fake endpoints, exercise pending, installed-but-unlinked, connected, offline, revoked, and reconnect from Chief of Staff. Enable the entry point for real users only after the official test app and relay can complete the flow. With owner authorization, verify in one approved test workspace that only the linked operator's DM creates a local, reviewable task. Later slices cover status, cancellation, action-specific approval, and replay-safe replies. |
 
@@ -142,13 +143,35 @@ approval request. A matching workspace and operator can become
 `ready_to_link` after the proof-authenticated poll resolves the DM. Local
 confirmation remains the activation boundary.
 
-Run `go test ./internal/slackrelay` for the two callback orders, wrong app,
-workspace or identity, expiry, replay, pending approval, and DM resolution
-against simulated Slack endpoints. The fixture keeps pairing state in memory
-and installation tokens are synthetic. Durable pairing and installation
-reuse, explicit relay-side cancellation and claim, revocation after a DM
-has been linked, and the public entry point remain follow-up work. The fixture
-does no Slack event delivery.
+The relay fixture stores pairing and callback state in a separate PostgreSQL
+database. Pairings are scoped to the app. The relay stores hashes of local
+proofs and OAuth states, and records callback consumption before contacting
+Slack. After the exchange, a second transaction requires the same current
+flow and an unexpired, active pairing. If the relay stops during an exchange,
+start a fresh authorization flow for that purpose. The pairing and any other
+completed flow remain available. These transactions enforce one-use state
+and prevent stale responses from overwriting newer state across processes.
+
+The fixture seals the synthetic bot token for the pairing and workspace with
+a key supplied to the test handler. Keeping that key across restart lets the
+relay resolve the DM after an install-first flow. The fixture discards the
+credential when the DM is resolved or the pairing is retired. A proof-authenticated
+`DELETE /pairings/{id}` retires the pairing. The relay also retires a pairing
+when a poll or callback observes expiry, or it receives a revoked token error
+during DM lookup. Retirement clears provider data and keeps a tombstone so
+an old poll cannot recreate the ID.
+
+Apply `relay/migrations/0001_slack_pairing.sql` to a **separate disposable
+PostgreSQL database**. Set `DIFQO_SLACK_RELAY_TEST_DATABASE_URL` to that database
+and run `go test -race -count=1 ./internal/slackrelay`. The tests recreate the
+HTTP handler and database pool against the same DB and use only numeric
+loopback Slack simulators. The local app's migrations remain in
+`migrations/`.
+
+This slice provides the relay revocation endpoint for synthetic tests.
+Wiring local disconnect to relay revocation, relay-side claim, workspace
+installation reuse, automatic expiry cleanup, and real Slack revocation
+events remain follow-up work. The fixture does no Slack event delivery.
 An outgoing-only local client keeps the workstation off the public Internet.
 A direct OAuth callback on each workstation would distribute Slack secrets
 and require a reachable callback for event delivery. An optional private
