@@ -6,19 +6,21 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
-	"time"
 
 	"github.com/nep-ai/difqo/internal/store"
 )
 
 type Options struct {
 	Image, Check, ArtifactRoot, AuthHome string
+	Runtime                              string
+	DisableSELinuxLabel                  bool
+	runtime                              containerRuntime
 }
 
-func (o *Options) Validate(repo string) error {
+func (o *Options) Validate(ctx context.Context, repo string) error {
+	o.runtime = containerRuntime{}
 	if o.Image == "" || strings.HasPrefix(o.Image, "-") || strings.TrimSpace(o.Check) == "" || len(o.Check) > 4096 {
 		return errors.New("Codex execution requires a local image and a check command")
 	}
@@ -45,19 +47,18 @@ func (o *Options) Validate(repo string) error {
 	if rel, err := filepath.Rel(authHome, o.ArtifactRoot); err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(os.PathSeparator)) {
 		return errors.New("use a dedicated Difqo Codex home")
 	}
-	if _, err := exec.LookPath("docker"); err != nil {
-		return errors.New("docker CLI is required for Codex execution")
+	o.runtime, err = o.resolveRuntime(ctx)
+	if err != nil && ctx.Err() == nil {
+		return fmt.Errorf("task was not claimed: %w", err)
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	if err := exec.CommandContext(ctx, "docker", "image", "inspect", o.Image).Run(); err != nil {
-		return errors.New("Docker must be running with the configured image available locally")
-	}
-	return nil
+	return err
 }
 
 func (o Options) Run(ctx context.Context, repo string, task store.Task) store.Result {
 	failure := store.Result{ExitCode: 125, Output: "could not prepare isolated execution"}
+	if o.runtime.executable == "" {
+		return failure
+	}
 	if err := os.MkdirAll(o.ArtifactRoot, 0o700); err != nil {
 		return failure
 	}
@@ -71,11 +72,6 @@ func (o Options) Run(ctx context.Context, repo string, task store.Task) store.Re
 		_ = os.Remove(dir) // Only remove empty attempt directories.
 	}()
 
-	imageID, err := exec.CommandContext(ctx, "docker", "image", "inspect", "--format", "{{.Id}}", o.Image).Output()
-	if err != nil {
-		return failure
-	}
-	image := strings.TrimSpace(string(imageID))
 	baseRepo := filepath.Join(dir, "base.git")
 	keepBase := false
 	defer func() {
@@ -99,7 +95,7 @@ func (o Options) Run(ctx context.Context, repo string, task store.Task) store.Re
 		goal = fmt.Sprintf("Saved project decision (revision %d):\n%s\n\nTask goal:\n%s",
 			task.Decision.ID, task.Decision.Body, goal)
 	}
-	c := container{name: "difqo-" + filepath.Base(dir), image: image, workspace: workspace}
+	c := container{name: "difqo-" + filepath.Base(dir), workspace: workspace, runtime: o.runtime}
 	if diagnostic, err := c.codex(ctx, o.AuthHome, goal); err != nil {
 		if errors.Is(err, ErrAuthentication) {
 			return store.Result{ExitCode: 125, Output: "Codex sign-in required", Blocked: true}
@@ -131,7 +127,7 @@ func (o Options) Run(ctx context.Context, repo string, task store.Task) store.Re
 		return c.capture(ctx, w, w, o.Check)
 	}
 	if len(patch) != 0 {
-		snapshot := store.Snapshot{Base: base, PatchSHA256: patchDigest(patch), Image: image, Command: o.Check}
+		snapshot := store.Snapshot{Base: base, PatchSHA256: patchDigest(patch), Image: c.runtime.imageID, Command: o.Check}
 		if !ValidSnapshot(snapshot) {
 			return store.Result{ExitCode: 125, Output: "could not record the review snapshot", Artifacts: result.Artifacts}
 		}
@@ -140,7 +136,7 @@ func (o Options) Run(ctx context.Context, repo string, task store.Task) store.Re
 		checkWorkspace := filepath.Join(dir, "check-workspace")
 		defer os.RemoveAll(checkWorkspace)
 		check = func(w io.Writer) (int, error) {
-			checkContainer := container{name: c.name, image: image, workspace: checkWorkspace}
+			checkContainer := container{name: c.name, workspace: checkWorkspace, runtime: c.runtime}
 			return checkContainer.checkSnapshot(ctx, baseRepo, snapshot, patch, w)
 		}
 	}

@@ -91,7 +91,7 @@ func (c container) checkSnapshot(ctx context.Context, baseRepo string, snapshot 
 	return code, nil
 }
 
-func Rerun(ctx context.Context, root *os.Root, ref string, snapshot store.Snapshot, patch []byte) (int, string) {
+func Rerun(ctx context.Context, root *os.Root, ref string, snapshot store.Snapshot, patch []byte, runtimeChoice string) (int, string) {
 	ctx, cancel := context.WithTimeout(ctx, 45*time.Second)
 	defer cancel()
 	base, err := root.OpenRoot(filepath.Join(ref, "base.git"))
@@ -105,13 +105,18 @@ func Rerun(ctx context.Context, root *os.Root, ref string, snapshot store.Snapsh
 	}
 	defer os.RemoveAll(dir)
 	if err := mountPath(dir); err != nil {
-		return 125, "Docker cannot mount the isolated check workspace."
+		return 125, "The container runtime cannot mount the isolated check workspace."
+	}
+	options := Options{Runtime: runtimeChoice, Image: snapshot.Image, ArtifactRoot: root.Name()}
+	runtime, err := options.resolveRuntime(ctx)
+	if err != nil {
+		return 125, "Could not initialize a container runtime for the saved image. Check the server's runtime configuration and local image."
 	}
 
 	var buffer bytes.Buffer
 	var truncated bool
 	log := &cappedOutput{writer: &buffer, remaining: 64 << 10, truncated: &truncated}
-	c := container{name: "difqo-" + filepath.Base(dir), image: snapshot.Image, workspace: filepath.Join(dir, "workspace")}
+	c := container{name: "difqo-" + filepath.Base(dir), workspace: filepath.Join(dir, "workspace"), runtime: runtime}
 	code, err := c.checkSnapshot(ctx, base.Name(), snapshot, patch, log)
 	if err != nil {
 		return code, err.Error()

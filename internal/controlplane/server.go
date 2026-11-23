@@ -25,7 +25,7 @@ import (
 
 var artifactSuffix = regexp.MustCompile(`^[0-9]+$`)
 
-func Handler(tasks store.Tasks, web fs.FS, artifacts *os.Root, projects []store.SpecialistProject) http.Handler {
+func Handler(tasks store.Tasks, web fs.FS, artifacts *os.Root, runtimeChoice string, projects []store.SpecialistProject) http.Handler {
 	router := http.NewServeMux()
 	registerSpecialists(router, store.Specialists{DB: tasks.DB, Projects: projects})
 	registerDecisions(router, tasks)
@@ -58,7 +58,7 @@ func Handler(tasks store.Tasks, web fs.FS, artifacts *os.Root, projects []store.
 		writeJSON(w, http.StatusOK, recent)
 	})
 	if artifacts != nil {
-		registerReview(router, tasks, artifacts)
+		registerReview(router, tasks, artifacts, runtimeChoice)
 		router.HandleFunc("GET /tasks/{id}/evidence/{file}", func(w http.ResponseWriter, r *http.Request) {
 			id, ok := readID(w, r)
 			if !ok {

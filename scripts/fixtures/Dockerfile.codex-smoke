@@ -1,5 +1,5 @@
 FROM difqo-codex:0.171.0
 COPY codex-app-server.mjs /opt/difqo-smoke/codex-app-server.mjs
-RUN printf '#!/bin/sh\nexec node /opt/difqo-smoke/codex-app-server.mjs\n' > /usr/local/bin/codex-smoke \
-    && chmod +x /usr/local/bin/codex-smoke \
-    && ln -sf /usr/local/bin/codex-smoke /usr/local/bin/codex
+RUN mv /usr/local/bin/codex /usr/local/bin/codex-real \
+    && printf '#!/bin/sh\nif [ "$1" = app-server ]; then exec node /opt/difqo-smoke/codex-app-server.mjs; fi\nexec /usr/local/bin/codex-real "$@"\n' > /usr/local/bin/codex \
+    && chmod +x /usr/local/bin/codex

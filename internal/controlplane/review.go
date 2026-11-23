@@ -49,7 +49,7 @@ func registerDecisions(router *http.ServeMux, tasks store.Tasks) {
 	})
 }
 
-func registerReview(router *http.ServeMux, tasks store.Tasks, artifacts *os.Root) {
+func registerReview(router *http.ServeMux, tasks store.Tasks, artifacts *os.Root, runtimeChoice string) {
 	router.HandleFunc("GET /tasks/{id}/review", func(w http.ResponseWriter, r *http.Request) {
 		attempt, ok := reviewAttempt(w, r, tasks)
 		if !ok {
@@ -114,7 +114,7 @@ func registerReview(router *http.ServeMux, tasks store.Tasks, artifacts *os.Root
 			storeError(w, err)
 			return
 		}
-		code, output := execution.Rerun(r.Context(), artifacts, result.Artifacts, *result.Snapshot, patch)
+		code, output := execution.Rerun(r.Context(), artifacts, result.Artifacts, *result.Snapshot, patch, runtimeChoice)
 		// Persist a terminal failure even if the browser canceled its request.
 		ctx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), 3*time.Second)
 		defer cancel()
