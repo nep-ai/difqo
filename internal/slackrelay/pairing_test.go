@@ -118,8 +118,12 @@ func newTestFixture(t *testing.T) *fixture {
 
 func (f *fixture) startRelay(address string) {
 	f.t.Helper()
-	var err error
-	f.db, err = pgxpool.New(context.Background(), f.dsn)
+	config, err := pgxpool.ParseConfig(f.dsn)
+	if err != nil {
+		f.t.Fatal("parse disposable relay database URL")
+	}
+	config.ConnConfig.RuntimeParams["application_name"] = f.appID
+	f.db, err = pgxpool.NewWithConfig(context.Background(), config)
 	if err != nil {
 		f.t.Fatal("open disposable relay database")
 	}
@@ -589,6 +593,10 @@ func (f *fixture) asyncRequest(method, path, proof string, status *pairingStatus
 	if proof != "" {
 		req.Header.Set("Authorization", "Bearer "+proof)
 	}
+	return f.asyncHTTP(req, status)
+}
+
+func (f *fixture) asyncHTTP(req *http.Request, status *pairingStatus) <-chan int {
 	client := f.server.Client()
 	done := make(chan int, 1)
 	go func() {

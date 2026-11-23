@@ -176,6 +176,90 @@ func TestSlackWebhookDeduplicatesAcrossRetryRestartAndReconnect(t *testing.T) {
 	}
 }
 
+func TestSlackWebhookRevocationSerializesWithQueueInsertion(t *testing.T) {
+	for _, order := range []string{"webhook first", "revocation first"} {
+		t.Run(order, func(t *testing.T) {
+			f := newTestFixture(t)
+			f.claim(f.prepareBinding(), f.proof, http.StatusNoContent)
+			existing, racing := f.fixtureEvent(), f.fixtureEvent()
+			f.webhook(existing, http.StatusOK)
+
+			ctx := context.Background()
+			tx, err := f.db.Begin(ctx)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer tx.Rollback(ctx)
+			// This lock blocks the queue's explicit FOR UPDATE. An ordinary
+			// read or a foreign key check alone can still pass it.
+			if _, err := tx.Exec(ctx, `
+				SELECT 1 FROM slack_relay_pairings WHERE app_id = $1 AND id = $2 FOR NO KEY UPDATE
+			`, f.appID, f.id); err != nil {
+				t.Fatal(err)
+			}
+			webhook := f.webhookRequest(mustJSON(t, racing), f.time(), testSigningSecret)
+			revoke, err := http.NewRequest("DELETE", f.server.URL+"/pairings/"+f.id, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			revoke.Header.Set("Authorization", "Bearer "+f.proof)
+			first, second := webhook, revoke
+			wantFirst, wantSecond, wantRows := http.StatusOK, http.StatusNoContent, 2
+			if order == "revocation first" {
+				first, second = revoke, webhook
+				wantFirst, wantSecond, wantRows = wantSecond, wantFirst, 1
+			}
+
+			firstDone := f.asyncHTTP(first, nil)
+			f.awaitBlockedQueries(1)
+			secondDone := f.asyncHTTP(second, nil)
+			f.awaitBlockedQueries(2)
+			if err := tx.Commit(ctx); err != nil {
+				t.Fatal(err)
+			}
+			if a, b := <-firstDone, <-secondDone; a != wantFirst || b != wantSecond {
+				t.Fatalf("requests returned %d and %d, want %d and %d", a, b, wantFirst, wantSecond)
+			}
+
+			var rows, goals, existingIDs int
+			if err := f.db.QueryRow(ctx, `
+				SELECT count(*), count(goal), count(*) FILTER (WHERE event_id = $3)
+				FROM slack_relay_events WHERE app_id = $1 AND pairing_id = $2
+			`, f.appID, f.id, existing.EventID).Scan(&rows, &goals, &existingIDs); err != nil {
+				t.Fatal(err)
+			}
+			if rows != wantRows || goals != 0 || existingIDs != 1 {
+				t.Fatalf("revoked queue has %d entries, %d goal bodies, %d original IDs", rows, goals, existingIDs)
+			}
+		})
+	}
+}
+
+func (f *fixture) awaitBlockedQueries(want int) {
+	f.t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 750*time.Millisecond)
+	defer cancel()
+	tick := time.NewTicker(10 * time.Millisecond)
+	defer tick.Stop()
+	for {
+		var count int
+		err := f.db.QueryRow(ctx, `
+			SELECT count(*) FROM pg_stat_activity WHERE application_name = $1 AND wait_event_type = 'Lock'
+		`, f.appID).Scan(&count)
+		if err != nil {
+			f.t.Fatalf("waiting for %d blocked relay queries: %v", want, err)
+		}
+		if count == want {
+			return
+		}
+		select {
+		case <-ctx.Done():
+			f.t.Fatalf("%d relay queries blocked, want %d", count, want)
+		case <-tick.C:
+		}
+	}
+}
+
 func TestSlackWebhookAsksForRetryOnQueueFailure(t *testing.T) {
 	f := newTestFixture(t)
 	f.claim(f.prepareBinding(), f.proof, http.StatusNoContent)
