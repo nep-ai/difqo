@@ -104,7 +104,11 @@ See [ADR 0005](adr/0005-specialist-configuration.md) and
 ```mermaid
 flowchart LR
     Browser["React + Vite web app"] --> Intake
-    Slack["Slack Socket Mode"] <-->|"Private owner DM"| Intake
+    Slack["Slack"] <-->|"Official app OAuth and signed DM events"| SlackRelay["Proposed hosted Slack relay"]
+    SlackRelay <-->|"Outbound pairing and delivery receipts"| SlackConnector["Local official Slack connector"]
+    Slack <-->|"Optional private app over Socket Mode"| SlackSocket["Local private Slack connector"]
+    SlackConnector --> Intake
+    SlackSocket --> Intake
     GitHub["GitHub API"] <-->|"Read comments and deliver approved replies"| GitHubPoller["Local outbound GitHub poller"]
     Official["Hosted Difqo credential service"] -->|"Scoped installation tokens"| GitHubPoller
     Private["Local private app credentials"] -->|"Mint installation tokens directly with GitHub"| GitHubPoller
@@ -136,3 +140,8 @@ interruption, and host restart behavior.
 
 See [ADR 0001](adr/0001-local-first-mvp-stack.md) for the tradeoffs behind this
 layout.
+
+The proposed official Slack connection separates workspace installation from
+linking the operator's private DM. The local service connects outbound to the
+relay and remains authoritative for tasks and approvals.
+[Official Slack Connect design](adr/0010-official-slack-connect.md)
