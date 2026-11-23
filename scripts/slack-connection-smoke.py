@@ -128,8 +128,15 @@ try:
             assert api('refresh', pairing_id=pair)[1]['state'] == 'approval_needed'
 
             stage.clear()
-            stage.update(state='installed', installed_workspace='T22')
-            assert api('refresh', pairing_id=pair)[1]['state'] == 'installed'
+            stage.update(state='installed', installed_workspace='T99')
+            assert api('refresh', pairing_id=pair)[0] == 502
+            _, retained = api()
+            assert retained['state'] == 'approval_needed' and retained['verified_workspace'] == 'T22'
+            assert 'installed_workspace' not in retained
+            stage.update(installed_workspace='T22')
+            _, installed = api('refresh', pairing_id=pair)
+            assert installed['state'] == 'installed' and installed['installed_workspace'] == 'T22'
+            assert installed['verified_workspace'] == 'T22' and installed['verified_operator'] == 'U22'
             assert api('confirm', pairing_id=pair, binding=binding)[0] == 409
             stage.update(state='ready_to_link', verified_workspace='T22', verified_operator='U99',
                          binding=binding | {'operator_id': 'U99'})

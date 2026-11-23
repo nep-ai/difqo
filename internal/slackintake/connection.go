@@ -137,10 +137,14 @@ func (c *Connections) relayStatus(ctx context.Context, p *store.SlackPairing) (r
 	default:
 		return status, ErrRelayUnavailable
 	}
+	workspace := status.Workspace
+	if workspace == "" {
+		workspace = p.Workspace
+	}
 	if (status.Workspace == "") != (status.Operator == "") ||
 		(status.Workspace != "" && (!idPattern.MatchString(status.Workspace) || !idPattern.MatchString(status.Operator))) ||
 		(status.Installed != "" && !idPattern.MatchString(status.Installed)) ||
-		(status.Workspace != "" && status.Installed != "" && status.Workspace != status.Installed) ||
+		(workspace != "" && status.Installed != "" && workspace != status.Installed) ||
 		(p.Workspace != "" && status.Workspace != "" && (p.Workspace != status.Workspace || p.Operator != status.Operator)) {
 		return status, ErrRelayUnavailable
 	}
