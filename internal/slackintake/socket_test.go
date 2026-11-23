@@ -50,8 +50,8 @@ func socketFixture(t *testing.T, handler http.HandlerFunc) *http.Client {
 
 var fixtureBinding = store.SlackBinding{AppID: "A11", WorkspaceID: "T11", OperatorID: "U11", ChannelID: "D11"}
 
-func fixtureCallback(eventID string) slackCallback {
-	var callback slackCallback
+func fixtureCallback(eventID string) Callback {
+	var callback Callback
 	callback.Type = "event_callback"
 	callback.EventID = eventID
 	callback.AppID = fixtureBinding.AppID
@@ -65,19 +65,19 @@ func fixtureCallback(eventID string) slackCallback {
 }
 
 func TestSocketGoalRejectsUnlinkedEvents(t *testing.T) {
-	for name, change := range map[string]func(*slackCallback){
-		"other app":       func(c *slackCallback) { c.AppID = "A99" },
-		"other workspace": func(c *slackCallback) { c.WorkspaceID = "T99" },
-		"other sender":    func(c *slackCallback) { c.Event.User = "U99" },
-		"other DM":        func(c *slackCallback) { c.Event.Channel = "D99" },
-		"group DM":        func(c *slackCallback) { c.Event.ChannelType = "mpim" },
-		"shared channel":  func(c *slackCallback) { c.ExternalShare = true },
-		"foreign sender":  func(c *slackCallback) { c.Event.UserTeam = "T99" },
-		"foreign message": func(c *slackCallback) { c.Event.Team = "T99" },
-		"bot":             func(c *slackCallback) { c.Event.BotID = "B99" },
-		"app message":     func(c *slackCallback) { c.Event.AppID = "A99" },
-		"edited message":  func(c *slackCallback) { c.Event.Subtype = "message_changed" },
-		"approval":        func(c *slackCallback) { c.Event.Text = "approve 1" },
+	for name, change := range map[string]func(*Callback){
+		"other app":       func(c *Callback) { c.AppID = "A99" },
+		"other workspace": func(c *Callback) { c.WorkspaceID = "T99" },
+		"other sender":    func(c *Callback) { c.Event.User = "U99" },
+		"other DM":        func(c *Callback) { c.Event.Channel = "D99" },
+		"group DM":        func(c *Callback) { c.Event.ChannelType = "mpim" },
+		"shared channel":  func(c *Callback) { c.ExternalShare = true },
+		"foreign sender":  func(c *Callback) { c.Event.UserTeam = "T99" },
+		"foreign message": func(c *Callback) { c.Event.Team = "T99" },
+		"bot":             func(c *Callback) { c.Event.BotID = "B99" },
+		"app message":     func(c *Callback) { c.Event.AppID = "A99" },
+		"edited message":  func(c *Callback) { c.Event.Subtype = "message_changed" },
+		"approval":        func(c *Callback) { c.Event.Text = "approve 1" },
 	} {
 		t.Run(name, func(t *testing.T) {
 			callback := fixtureCallback("EvCaseSensitive1")
@@ -137,7 +137,7 @@ func TestSocketModeACKAndReconnect(t *testing.T) {
 				return true
 			}
 			send(map[string]any{"type": "hello", "connection_info": map[string]string{"app_id": fixtureBinding.AppID}})
-			eventFrame := func(delivery string, callback slackCallback) map[string]any {
+			eventFrame := func(delivery string, callback Callback) map[string]any {
 				return map[string]any{"type": "events_api", "envelope_id": delivery, "payload": callback}
 			}
 			first := fixtureCallback("EvFirst")

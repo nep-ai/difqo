@@ -23,14 +23,14 @@ import (
 )
 
 const (
-	testApp       = "A123"
-	testWorkspace = "T123"
-	testOperator  = "U123"
-	testAdmin     = "U456"
-	testClient    = "fixture-client"
-	testSecret    = "fixture-secret"
-	testBot       = "fixture-bot-token"
-	testChannel   = "D123"
+	testWorkspace     = "T123"
+	testOperator      = "U123"
+	testAdmin         = "U456"
+	testClient        = "fixture-client"
+	testSecret        = "fixture-secret"
+	testSigningSecret = "fixture-signing-secret"
+	testBot           = "fixture-bot-token"
+	testChannel       = "D123"
 )
 
 type fixture struct {
@@ -38,7 +38,7 @@ type fixture struct {
 	server, slack                                *httptest.Server
 	now                                          atomic.Int64
 	identityExchanges, installExchanges, dmCalls atomic.Int32
-	id, proof                                    string
+	id, proof, appID                             string
 	db                                           *pgxpool.Pool
 	dsn                                          string
 	tokenKey                                     [32]byte
@@ -54,7 +54,8 @@ func newTestFixture(t *testing.T) *fixture {
 	if dsn == "" {
 		t.Skip("set DIFQO_SLACK_RELAY_TEST_DATABASE_URL to a migrated disposable relay database")
 	}
-	f := &fixture{t: t, dsn: dsn, id: randomSecret()[:32], proof: randomSecret()}
+	f := &fixture{t: t, dsn: dsn, id: randomSecret()[:32], proof: randomSecret(),
+		appID: "A" + strings.ToUpper(randomSecret()[:18])}
 	rand.Read(f.tokenKey[:])
 	f.now.Store(time.Now().Unix())
 	key, err := rsa.GenerateKey(rand.Reader, 2048)
@@ -130,7 +131,7 @@ func (f *fixture) startRelay(address string) {
 			f.t.Fatalf("restart relay listener: %v", err)
 		}
 	}
-	handler, err := newFixture(f.db, f.tokenKey, "http://"+f.server.Listener.Addr().String(), f.slack.URL, testClient, testSecret, testApp, f.time)
+	handler, err := newFixture(f.db, f.tokenKey, "http://"+f.server.Listener.Addr().String(), f.slack.URL, testClient, testSecret, f.appID, testSigningSecret, f.time)
 	if err != nil {
 		f.t.Fatal(err)
 	}
@@ -151,7 +152,7 @@ func (f *fixture) expire() {
 	_, err := f.db.Exec(context.Background(), `
 		UPDATE slack_relay_pairings SET expires_at = clock_timestamp() - interval '1 second'
 		WHERE app_id = $1 AND id = $2
-	`, testApp, f.id)
+	`, f.appID, f.id)
 	if err != nil {
 		f.t.Fatal(err)
 	}
@@ -194,7 +195,7 @@ func (f *fixture) exchange(w http.ResponseWriter, req *http.Request, key *rsa.Pr
 	if req.PostFormValue("redirect_uri") != f.server.URL+"/oauth/install" {
 		f.t.Error("wrong install callback")
 	}
-	app, team, token, scopes, enterprise := testApp, testWorkspace, testBot, botScopes, false
+	app, team, token, scopes, enterprise := f.appID, testWorkspace, testBot, botScopes, false
 	switch code {
 	case "wrong-workspace":
 		team = "T999"
@@ -346,7 +347,7 @@ func TestOfficialPairingSeparatesAdminAndOperator(t *testing.T) {
 				t.Fatal("unauthenticated poll opened a DM")
 			}
 			v := f.poll("ready_to_link")
-			if v.Binding == nil || v.Binding.AppID != testApp || v.Binding.WorkspaceID != testWorkspace ||
+			if v.Binding == nil || v.Binding.AppID != f.appID || v.Binding.WorkspaceID != testWorkspace ||
 				v.Binding.OperatorID != testOperator || v.Binding.ChannelID != testChannel {
 				t.Fatalf("unexpected binding: %+v", v.Binding)
 			}
@@ -472,7 +473,7 @@ func TestOfficialPairingReconnectAfterRevokedInstallation(t *testing.T) {
 
 func TestOfficialPairingFixtureRejectsRemoteOrigins(t *testing.T) {
 	for _, origin := range []string{"https://slack.com", "http://localhost:8080", "http://127.0.0.1:8080/api"} {
-		if _, err := NewFixture(new(pgxpool.Pool), [32]byte{1}, "http://127.0.0.1:3210", origin, testClient, testSecret, testApp); err == nil {
+		if _, err := NewFixture(new(pgxpool.Pool), [32]byte{1}, "http://127.0.0.1:3210", origin, testClient, testSecret, "A123", testSigningSecret); err == nil {
 			t.Errorf("accepted non-fixture Slack origin %q", origin)
 		}
 	}
@@ -495,7 +496,7 @@ func TestOfficialPairingResumesAcrossRelayRestarts(t *testing.T) {
 	var sealed []byte
 	if err := f.db.QueryRow(context.Background(), `
 		SELECT sealed_bot_token FROM slack_relay_pairings WHERE app_id = $1 AND id = $2
-	`, testApp, f.id).Scan(&sealed); err != nil || len(sealed) == 0 || strings.Contains(string(sealed), testBot) {
+	`, f.appID, f.id).Scan(&sealed); err != nil || len(sealed) == 0 || strings.Contains(string(sealed), testBot) {
 		t.Fatal("expected a sealed fixture bot token")
 	}
 	identity := f.start(signIn)
@@ -512,7 +513,7 @@ func TestOfficialPairingResumesAcrossRelayRestarts(t *testing.T) {
 	}
 	if err := f.db.QueryRow(context.Background(), `
 		SELECT sealed_bot_token FROM slack_relay_pairings WHERE app_id = $1 AND id = $2
-	`, testApp, f.id).Scan(&sealed); err != nil || sealed != nil {
+	`, f.appID, f.id).Scan(&sealed); err != nil || sealed != nil {
 		t.Fatal("resolved pairing retained the fixture bot token")
 	}
 	f.request("DELETE", "/pairings/"+f.id, strings.Repeat("f", 64), nil, http.StatusUnauthorized, nil)
@@ -682,7 +683,7 @@ func (f *fixture) assertRetired() {
 		        SELECT 1 FROM slack_relay_oauth_flows f WHERE f.app_id = p.app_id AND f.pairing_id = p.id
 		    )
 		FROM slack_relay_pairings p WHERE app_id = $1 AND id = $2
-	`, testApp, f.id).Scan(&scrubbed)
+	`, f.appID, f.id).Scan(&scrubbed)
 	if err != nil || !scrubbed {
 		f.t.Fatalf("retirement did not clear pairing and OAuth state: %v", err)
 	}

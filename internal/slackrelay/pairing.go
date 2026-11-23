@@ -1,4 +1,4 @@
-// Package slackrelay implements the official Slack pairing protocol for loopback fixtures.
+// Package slackrelay implements the official Slack pairing and event protocols for loopback fixtures.
 package slackrelay
 
 import (
@@ -50,12 +50,12 @@ var (
 
 // NewFixture builds an HTTP handler for a numeric loopback Slack simulator
 // and a dedicated relay database. The synthetic token key must survive restarts.
-func NewFixture(db *pgxpool.Pool, tokenKey [32]byte, origin, slackOrigin, clientID, clientSecret, appID string) (http.Handler, error) {
-	return newFixture(db, tokenKey, origin, slackOrigin, clientID, clientSecret, appID, time.Now)
+func NewFixture(db *pgxpool.Pool, tokenKey [32]byte, origin, slackOrigin, clientID, clientSecret, appID, signingSecret string) (http.Handler, error) {
+	return newFixture(db, tokenKey, origin, slackOrigin, clientID, clientSecret, appID, signingSecret, time.Now)
 }
 
-func newFixture(db *pgxpool.Pool, tokenKey [32]byte, origin, slackOrigin, clientID, clientSecret, appID string, now func() time.Time) (http.Handler, error) {
-	if !loopbackOrigin(origin) || !loopbackOrigin(slackOrigin) || clientID == "" || clientSecret == "" || !slackAppID.MatchString(appID) {
+func newFixture(db *pgxpool.Pool, tokenKey [32]byte, origin, slackOrigin, clientID, clientSecret, appID, signingSecret string, now func() time.Time) (http.Handler, error) {
+	if !loopbackOrigin(origin) || !loopbackOrigin(slackOrigin) || clientID == "" || clientSecret == "" || signingSecret == "" || !slackAppID.MatchString(appID) {
 		return nil, errors.New("Slack relay fixture requires numeric HTTP loopback origins and synthetic app configuration")
 	}
 	if db == nil || tokenKey == ([32]byte{}) {
@@ -84,6 +84,8 @@ func newFixture(db *pgxpool.Pool, tokenKey [32]byte, origin, slackOrigin, client
 	mux := http.NewServeMux()
 	mux.HandleFunc("PUT /pairings/{id}", r.poll)
 	mux.HandleFunc("DELETE /pairings/{id}", r.revoke)
+	mux.HandleFunc("POST /pairings/{id}/claim", r.claim)
+	mux.HandleFunc("POST /slack/events", r.signedEvents(signingSecret, now))
 	mux.HandleFunc("POST /pairings/{id}/identity", r.start(signIn))
 	mux.HandleFunc("POST /pairings/{id}/install", r.start(installApp))
 	mux.HandleFunc("POST /pairings/{id}/approval-needed", r.markPending)
@@ -166,7 +168,8 @@ func (r *relay) status(p pairing) pairingStatus {
 	switch {
 	case p.channel != "":
 		v.State = "ready_to_link"
-		v.Binding = &store.SlackBinding{AppID: r.slack.appID, WorkspaceID: v.Workspace, OperatorID: v.Operator, ChannelID: p.channel}
+		binding := r.pairings.binding(p)
+		v.Binding = &binding
 	case v.Installed != "":
 		v.State = "installed"
 	case p.pending:

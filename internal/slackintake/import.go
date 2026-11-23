@@ -54,7 +54,14 @@ func Import(ctx context.Context, tasks store.Tasks, binding store.SlackBinding, 
 }
 
 func authorizedGoal(binding store.SlackBinding, incoming event) (string, error) {
-	if incoming.SlackBinding != binding || incoming.Type != "message" || incoming.ChannelType != "im" ||
+	if incoming.SlackBinding != binding {
+		return "", errors.New("event is outside the linked operator's private DM")
+	}
+	return incoming.goal()
+}
+
+func (incoming event) goal() (string, error) {
+	if incoming.Type != "message" || incoming.ChannelType != "im" ||
 		incoming.Bot == nil || *incoming.Bot || incoming.Subtype != "" {
 		return "", errors.New("event is outside the linked operator's private DM")
 	}

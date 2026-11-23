@@ -126,7 +126,8 @@ pairing. Org-wide installations are outside the first workspace-level slice.
 | Local binding lifecycle | With fake relay statuses, restart each side during connect and resume with the same pairing. A second instance, reused or expired state, the wrong workspace, or an installing admin trying to claim the pairing cannot activate intake. Cancel and disconnect revoke the current generation. Prove private and official modes are mutually exclusive in one local database and keep tasks and replay history when switching. |
 | Relay identity and install | Mock Slack callbacks and code exchanges. Cover identity and install succeeding in either order, pending approval with no callback, user cancellation, app or workspace mismatch, unsupported org installation, missing Messages tab scopes, replayed callbacks, and reconnect after revocation. Admin installation can satisfy the workspace prerequisite but only the verified local operator can link their DM. |
 | Durable relay pairing | Recreate the relay and its database pool between start, callback, and poll. An unused callback remains usable and a consumed, replaced, expired, or revoked callback cannot reach the token exchange. Persist pending approval and preserve operator versus installer identity. Revoke while a callback or DM lookup is in flight and verify the old pairing stays retired across restart. |
-| Inbound delivery | Echo a valid signed URL challenge with no binding and verify only a successful response. Reject unsigned or stale challenges. Send signed synthetic events, stale or invalid signatures, and events from a second workspace, user, and DM. Verify one authorized goal and zero unauthorized tasks. Retry after relay restart and simulated loss of the local receipt. Each event creates one task bound to the existing saved decision. Simulate a disconnect with delivery in flight and verify the retired generation cannot import it. GitHub intake and the private Socket Mode fixtures still pass. |
+| Signed webhook and relay queue | Echo a valid signed URL challenge before any pairing, without querying PostgreSQL. Reject tampered, unsigned, stale, or oversized requests. A proof-authenticated claim activates only the displayed binding. Queue one goal for concurrent or restarted delivery of the same app, workspace, and event ID. Discard other workspaces, senders, DMs, and bot messages. Return a retriable error if PostgreSQL fails. Revoke the claim and scrub queued goal bodies while retaining replay identifiers. |
+| Local delivery | Retry after relay restart and simulated loss of the local receipt. Each delivered event creates one task bound to the existing saved decision. Simulate a disconnect with delivery in flight and verify the retired local generation cannot import it. GitHub intake and the private Socket Mode fixtures still pass. |
 | UI and live acceptance | On fake endpoints, exercise pending, installed-but-unlinked, connected, offline, revoked, and reconnect from Chief of Staff. Enable the entry point for real users only after the official test app and relay can complete the flow. With owner authorization, verify in one approved test workspace that only the linked operator's DM creates a local, reviewable task. Later slices cover status, cancellation, action-specific approval, and replay-safe replies. |
 
 The local connection lifecycle and migration now preserve existing private
@@ -161,17 +162,34 @@ when a poll or callback observes expiry, or it receives a revoked token error
 during DM lookup. Retirement clears provider data and keeps a tombstone so
 an old poll cannot recreate the ID.
 
-Apply `relay/migrations/0001_slack_pairing.sql` to a **separate disposable
-PostgreSQL database**. Set `DIFQO_SLACK_RELAY_TEST_DATABASE_URL` to that database
+Apply `relay/migrations/*.sql` in order to a **separate disposable PostgreSQL
+database**. Set `DIFQO_SLACK_RELAY_TEST_DATABASE_URL` to that database
 and run `go test -race -count=1 ./internal/slackrelay`. The tests recreate the
 HTTP handler and database pool against the same DB and use only numeric
 loopback Slack simulators. The local app's migrations remain in
 `migrations/`.
 
-This slice provides the relay revocation endpoint for synthetic tests.
-Wiring local disconnect to relay revocation, relay-side claim, workspace
-installation reuse, automatic expiry cleanup, and real Slack revocation
-events remain follow-up work. The fixture does no Slack event delivery.
+The Slack provider module of the planned Connections service accepts signed
+events at `POST /slack/events`. It verifies the v0 signature over at most
+64 KiB of raw body and accepts timestamps within five minutes. A verified
+URL challenge returns plaintext before the queue is consulted. Message
+normalization shares the private connector's Slack DM and goal rules.
+
+The local client in the fixture claims the exact displayed binding through
+a proof-authenticated `POST /pairings/{id}/claim`. The claim is idempotent
+and activates one route for that app, workspace, operator, and DM. The
+unclaimed pairing expires after 15 minutes. A claim stays active until
+revoked. The queue locks the claimed row while inserting the goal, pairing
+ID, and event identity. PostgreSQL deduplicates by app, workspace, and event
+ID, including after a new pairing. Slack receives HTTP 200 after the write
+or an intentional skip, and HTTP 503 if the queue cannot commit. Revocation
+clears the old claim and queued goal bodies in the same transaction while
+retaining replay identifiers.
+
+The relay remains a loopback fixture. The local confirmation and disconnect
+handlers still need to call the relay claim and revocation endpoints. Outbound
+polling, local receipt after task creation, automatic retention, workspace
+installation reuse, and live Slack revocation events remain follow-up work.
 An outgoing-only local client keeps the workstation off the public Internet.
 A direct OAuth callback on each workstation would distribute Slack secrets
 and require a reachable callback for event delivery. An optional private
