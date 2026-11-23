@@ -13,7 +13,7 @@ set -a
 set +a
 psql "$DIFQO_DATABASE_URL" -v ON_ERROR_STOP=1 \
   -f migrations/0001_tasks.sql -f migrations/0002_attempt_leases.sql \
-  -f migrations/0003_execution_evidence.sql
+  -f migrations/0003_execution_evidence.sql -f migrations/0004_patch_review.sql
 go build -o bin/difqo ./cmd/difqo
 ./bin/difqo server
 ```
@@ -109,7 +109,7 @@ database, and run:
 ```sh
 psql "$DIFQO_DATABASE_URL" -v ON_ERROR_STOP=1 \
   -f migrations/0001_tasks.sql -f migrations/0002_attempt_leases.sql \
-  -f migrations/0003_execution_evidence.sql
+  -f migrations/0003_execution_evidence.sql -f migrations/0004_patch_review.sql
 python3 scripts/postgres-smoke.py bin/difqo
 ```
 
@@ -122,7 +122,8 @@ database.
 To include the Docker checks, build the Codex image above and the synthetic App
 Server image below, then set `DIFQO_SMOKE_CODEX=1` when running the smoke script
 against a fresh migrated database. These checks use the real App Server to
-verify missing sign-in and a synthetic JSON-RPC turn to verify patch capture.
+verify missing sign-in and a synthetic JSON-RPC turn to verify decision
+binding, patch capture, reruns, stale evidence, and persisted approval.
 
 ```sh
 docker build -t difqo-codex-smoke -f scripts/fixtures/Dockerfile.codex-smoke scripts/fixtures
@@ -151,3 +152,21 @@ For frontend development, start the server on the default port, then run
 `corepack pnpm@10.34.9 --filter difqo-local-ui dev`. The Vite server proxies API
 requests to Difqo. The frontend follows the [Difqo brand guidelines](brand.md)
 and serves its fonts locally.
+
+### Review a patch
+
+1. In the Chief of Staff composer, open **Project decision** and save a
+   decision. Each new goal captures the latest saved revision.
+2. Submit a goal and run the Codex worker with an operator-selected check.
+3. Open **Review patch** under the Chief of Staff update. Inspect the decision
+   revision, base commit, patch digest, and original check. **View patch**
+   includes **Download patch**.
+4. Select **Rerun check**, then **Approve patch** after the rerun passes.
+   Approval is recorded in PostgreSQL. Apply the downloaded patch manually.
+
+Use a private artifact directory shared by the server and worker on the same
+host. The server needs access to the same local Docker engine and image ID
+used by the worker. Keep the shallow base and patch in the artifact directory
+for reruns. A changed patch file is treated as unavailable. Submit a new goal
+to review a different patch or use a different saved decision. Evidence
+captured before migration 0004 is still viewable from **View run evidence**.

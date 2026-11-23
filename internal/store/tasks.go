@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"time"
 )
@@ -13,10 +14,11 @@ const (
 )
 
 type Task struct {
-	ID      int64    `json:"id"`
-	Goal    string   `json:"goal"`
-	Status  string   `json:"status"`
-	Attempt *Attempt `json:"attempt,omitempty"`
+	ID       int64     `json:"id"`
+	Goal     string    `json:"goal"`
+	Status   string    `json:"status"`
+	Decision *Decision `json:"decision,omitempty"`
+	Attempt  *Attempt  `json:"attempt,omitempty"`
 }
 
 type Attempt struct {
@@ -28,10 +30,11 @@ type Attempt struct {
 }
 
 type Result struct {
-	ExitCode  int    `json:"exit_code"`
-	Output    string `json:"output"`
-	Blocked   bool   `json:"blocked,omitempty"`
-	Artifacts string `json:"artifacts,omitempty"`
+	ExitCode  int       `json:"exit_code"`
+	Output    string    `json:"output"`
+	Blocked   bool      `json:"blocked,omitempty"`
+	Artifacts string    `json:"artifacts,omitempty"`
+	Snapshot  *Snapshot `json:"snapshot,omitempty"`
 }
 
 type Tasks struct {
@@ -40,8 +43,19 @@ type Tasks struct {
 
 func (s Tasks) Create(ctx context.Context, goal string) (Task, error) {
 	task := Task{Goal: goal, Status: "queued"}
-	err := s.DB.QueryRowContext(ctx,
-		"INSERT INTO tasks (goal) VALUES ($1) RETURNING id", goal).Scan(&task.ID)
+	var decisionID *int64
+	var decisionBody *string
+	err := s.DB.QueryRowContext(ctx, `
+		WITH saved AS (
+			INSERT INTO tasks (goal, decision_id)
+			VALUES ($1, (SELECT id FROM project_decisions ORDER BY id DESC LIMIT 1))
+			RETURNING id, decision_id
+		)
+		SELECT saved.id, d.id, d.body FROM saved LEFT JOIN project_decisions d ON d.id = saved.decision_id`, goal).
+		Scan(&task.ID, &decisionID, &decisionBody)
+	if err == nil && decisionID != nil {
+		task.Decision = &Decision{ID: *decisionID, Body: *decisionBody}
+	}
 	return task, err
 }
 
@@ -54,9 +68,9 @@ const taskQuery = `
 				WHEN a.attempt_number = $1 THEN 'exhausted'
 				ELSE 'queued'
 			END,
-			a.id, a.attempt_number, a.lease_expires_at, a.completed_at, a.exit_code, a.output, a.blocked, a.artifacts
-		FROM tasks t LEFT JOIN LATERAL (
-			SELECT id, attempt_number, lease_expires_at, completed_at, exit_code, output, blocked, artifacts
+			a.id, a.attempt_number, a.lease_expires_at, a.completed_at, a.exit_code, a.output, a.blocked, a.artifacts, a.snapshot, d.id, d.body
+		FROM tasks t LEFT JOIN project_decisions d ON d.id = t.decision_id LEFT JOIN LATERAL (
+			SELECT id, attempt_number, lease_expires_at, completed_at, exit_code, output, blocked, artifacts, snapshot
 			FROM attempts WHERE task_id = t.id ORDER BY attempt_number DESC LIMIT 1
 		) a ON true`
 
@@ -91,15 +105,24 @@ func scanTask(row interface{ Scan(...any) error }) (Task, error) {
 	var output *string
 	var blocked *bool
 	var artifacts *string
+	var decisionID *int64
+	var decisionBody *string
+	var snapshot []byte
 	err := row.Scan(
 		&task.ID, &task.Goal, &task.Status, &attemptID, &number, &leaseExpiresAt,
-		&attempt.CompletedAt, &exitCode, &output, &blocked, &artifacts)
+		&attempt.CompletedAt, &exitCode, &output, &blocked, &artifacts, &snapshot, &decisionID, &decisionBody)
+	if err == nil && decisionID != nil {
+		task.Decision = &Decision{ID: *decisionID, Body: *decisionBody}
+	}
 	if err == nil && attemptID != nil {
 		attempt.ID = *attemptID
 		attempt.Number = *number
 		attempt.LeaseExpiresAt = *leaseExpiresAt
 		if attempt.CompletedAt != nil {
 			attempt.Result = &Result{ExitCode: *exitCode, Output: *output, Blocked: *blocked, Artifacts: *artifacts}
+			if snapshot != nil {
+				err = json.Unmarshal(snapshot, &attempt.Result.Snapshot)
+			}
 		}
 		task.Attempt = &attempt
 	}
@@ -123,8 +146,11 @@ func (s Tasks) claim(ctx context.Context) (Task, bool, error) {
 	defer tx.Rollback()
 
 	task := Task{Status: "claimed"}
+	var decisionID *int64
+	var decisionBody *string
 	err = tx.QueryRowContext(ctx, `
-		SELECT t.id, t.goal FROM tasks t
+		SELECT t.id, t.goal, d.id, d.body FROM tasks t
+		LEFT JOIN project_decisions d ON d.id = t.decision_id
 		LEFT JOIN LATERAL (
 			SELECT attempt_number, lease_expires_at, completed_at
 			FROM attempts WHERE task_id = t.id ORDER BY attempt_number DESC LIMIT 1
@@ -133,7 +159,7 @@ func (s Tasks) claim(ctx context.Context) (Task, bool, error) {
 			a.completed_at IS NULL AND a.lease_expires_at <= statement_timestamp()
 			AND a.attempt_number < $1
 		)
-		ORDER BY t.id LIMIT 1 FOR UPDATE OF t SKIP LOCKED`, maxAttempts).Scan(&task.ID, &task.Goal)
+		ORDER BY t.id LIMIT 1 FOR UPDATE OF t SKIP LOCKED`, maxAttempts).Scan(&task.ID, &task.Goal, &decisionID, &decisionBody)
 	if err != nil {
 		return Task{}, false, err
 	}
@@ -161,6 +187,9 @@ func (s Tasks) claim(ctx context.Context) (Task, bool, error) {
 		return Task{}, errors.Is(err, sql.ErrNoRows), err
 	}
 	task.Attempt = &attempt
+	if decisionID != nil {
+		task.Decision = &Decision{ID: *decisionID, Body: *decisionBody}
+	}
 	return task, false, tx.Commit()
 }
 
@@ -188,20 +217,25 @@ func (s Tasks) Renew(ctx context.Context, id int64) error {
 }
 
 func (s Tasks) Complete(ctx context.Context, id int64, result Result) error {
+	snapshot, err := json.Marshal(result.Snapshot)
+	if err != nil {
+		return err
+	}
 	var matched *bool
-	err := s.DB.QueryRowContext(ctx, `
+	err = s.DB.QueryRowContext(ctx, `
 		WITH target AS MATERIALIZED (
-			SELECT id, completed_at, exit_code, output, blocked, artifacts, lease_expires_at
+			SELECT id, completed_at, exit_code, output, blocked, artifacts, snapshot, lease_expires_at
 			FROM attempts WHERE id = $1 FOR UPDATE
 		), completed AS (
-			UPDATE attempts a SET completed_at = clock_timestamp(), exit_code = $2, output = $3, blocked = $4, artifacts = $5
+			UPDATE attempts a SET completed_at = clock_timestamp(), exit_code = $2, output = $3, blocked = $4, artifacts = $5, snapshot = NULLIF($6::jsonb, 'null')
 			FROM target t
 			WHERE a.id = t.id AND t.completed_at IS NULL AND t.lease_expires_at > clock_timestamp()
 			RETURNING a.id
 		)
 		SELECT CASE WHEN t.completed_at IS NOT NULL THEN t.exit_code = $2 AND t.output = $3 AND t.blocked = $4 AND t.artifacts = $5
+				AND t.snapshot IS NOT DISTINCT FROM NULLIF($6::jsonb, 'null')
 			WHEN c.id IS NOT NULL THEN true END
-		FROM target t LEFT JOIN completed c USING (id)`, id, result.ExitCode, result.Output, result.Blocked, result.Artifacts).Scan(&matched)
+		FROM target t LEFT JOIN completed c USING (id)`, id, result.ExitCode, result.Output, result.Blocked, result.Artifacts, snapshot).Scan(&matched)
 	if err != nil {
 		return err
 	}

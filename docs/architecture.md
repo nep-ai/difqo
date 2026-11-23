@@ -5,14 +5,15 @@
 ```mermaid
 flowchart LR
     Operator["Local operator"] --> Browser["Chief of Staff web app"]
-    Browser -->|"Submit goals and read real results over loopback HTTP"| Server["difqo server"]
+    Browser -->|"Save decisions, submit goals, and review patches over loopback HTTP"| Server["difqo server"]
     Operator -->|"Run the worker when ready"| Worker
     Worker["difqo worker"] -->|"Claim a leased attempt and report its result over loopback HTTP"| Server
-    Server -->|"Lock claims and persist attempt deadlines and results"| Postgres[("PostgreSQL on host")]
+    Server -->|"Persist decisions, attempts, review checks, and approvals"| Postgres[("PostgreSQL on host")]
     Worker -->|"Read HEAD or make a shallow clone"| Repo["Operator-selected Git checkout"]
     Worker -->|"Run one App Server turn over stdio"| Codex["Disposable Docker execution workspace"]
-    Worker -->|"Capture diff and check log"| Artifacts["Host artifact directory"]
-    Server -->|"Read attempt-bound evidence"| Artifacts
+    Worker -->|"Capture base, diff, and check log"| Artifacts["Host artifact directory"]
+    Server -->|"Read and verify attempt-bound evidence"| Artifacts
+    Server -->|"Rerun the pinned check on the original base plus the patch"| Check["Disposable check container"]
 ```
 
 The local operator starts the server and starts a worker with a checkout path.
@@ -39,8 +40,13 @@ The Go server can serve the built React app and API on the same loopback origin.
 The conversation is reconstructed from the 100 newest saved goals and their
 latest attempts. Submitting a goal uses the existing task intake. The browser
 polls for state changes and expands available worker artifacts in a project file.
-The app reports the worker's recorded result. Local patch approval and rerunning
-checks against a reviewed patch remain planned in issue [#10](https://github.com/nep-ai/difqo/issues/10).
+The project file links to patch review. Goals capture the latest saved
+decision revision at submission. For a captured patch, the review shows that
+decision, the original base, the patch digest, and the check command and logs.
+The server reruns the check in a disposable container reconstructed from the
+captured base and digest-verified patch. PostgreSQL records approval for the
+attempt and its latest passing rerun. The reviewed patch is available for
+manual application. See [ADR 0005](adr/0005-exact-patch-review.md).
 
 See [ADR 0004](adr/0004-local-web-app.md) and the
 [local web setup](development.md#chief-of-staff-web-app).
