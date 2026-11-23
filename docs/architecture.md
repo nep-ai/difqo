@@ -51,6 +51,20 @@ manual application. See [ADR 0005](adr/0005-exact-patch-review.md).
 See [ADR 0004](adr/0004-local-web-app.md) and the
 [local web setup](development.md#chief-of-staff-web-app).
 
+
+## Specialist configuration
+
+The operator registers local Git checkout bindings at server startup and
+reviews specialist proposals in the Chief of Staff conversation. PostgreSQL
+stores the proposal, decision and immutable approved configuration. Each
+configuration has one bounded profile and an explicit project set. The Go
+server checks eligibility against current bindings and policy. Approval and
+disable actions are transactional and need no worker.
+
+Specialist runs in [#20](https://github.com/nep-ai/difqo/issues/20) will select
+one eligible project per run and enforce its isolation boundary. See
+[ADR 0005](adr/0005-specialist-configuration.md).
+
 ## MVP target
 
 ```mermaid

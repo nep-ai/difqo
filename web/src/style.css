@@ -124,3 +124,23 @@ dialog p { margin: 9px 0 15px; }
 .review-status { font-weight: 640; }
 .decision-trigger { color: var(--cobalt); background: transparent; border: 0; padding: 0; text-decoration: underline; }
 #decision-body { display: block; width: 100%; resize: vertical; margin: 6px 0 12px; padding: 8px; border: 1px solid var(--line-control); border-radius: 8px; }
+
+.specialist-turn { margin: 16px 0; }
+.specialist-card h2, .specialist-card h3 { margin: 0; }
+.specialist-card { padding: 16px; border: 1px solid var(--line); background: #fff; border-radius: 12px; }
+.specialist-record { border-top: 1px solid var(--line); padding-top: 12px; margin-top: 14px; }
+.specialist-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.specialist-field, .specialist-choice { display: flex; gap: 6px; margin: 10px 0; }
+.specialist-field { flex-direction: column; }
+.specialist-field input, .specialist-field textarea, .specialist-field select {
+  min-width: 0; max-width: 100%; font: inherit; color: inherit;
+  border: 1px solid var(--muted); background: #fff; border-radius: 6px; padding: 6px;
+}
+.specialist-field textarea { min-height: 4em; resize: vertical; }
+.specialist-card fieldset { min-width: 0; border: 1px solid var(--muted); }
+.specialist-config { margin: 10px 0; }
+.specialist-config dt { font-weight: 650; }
+.specialist-config dd { margin: 0 0 8px; white-space: pre-wrap; }
+.specialist-config ul { margin: 0; padding-left: 22px; }
+.specialist-proposal { margin: 8px 0; padding: 8px; border: 1px solid var(--line); border-radius: 6px; }
+.specialist-card [role="status"]:empty { margin: 0; }
