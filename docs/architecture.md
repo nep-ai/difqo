@@ -65,9 +65,12 @@ configuration has one bounded profile and an explicit project set. The Go
 server checks eligibility against current bindings and policy. Approval and
 disable actions are transactional and need no worker.
 
-Specialist runs in [#20](https://github.com/nep-ai/difqo/issues/20) will select
-one eligible project per run and enforce its isolation boundary. See
-[ADR 0005](adr/0005-specialist-configuration.md).
+A specialist run pins the approved revision, project binding, and that
+project's saved decision. A bound worker rechecks the current authorization
+at claim time and uses local Git reads to produce its snapshot report.
+The conversation shows attempts and failures from the run's project file.
+See [ADR 0005](adr/0005-specialist-configuration.md) and
+[ADR 0008](adr/0008-project-bound-specialist-runs.md).
 
 ## MVP target
 

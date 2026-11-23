@@ -144,3 +144,5 @@ dialog p { margin: 9px 0 15px; }
 .specialist-config ul { margin: 0; padding-left: 22px; }
 .specialist-proposal { margin: 8px 0; padding: 8px; border: 1px solid var(--line); border-radius: 6px; }
 .specialist-card [role="status"]:empty { margin: 0; }
+
+.specialist-report { white-space: pre-wrap; overflow-wrap: anywhere; }

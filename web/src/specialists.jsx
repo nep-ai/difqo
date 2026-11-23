@@ -33,7 +33,63 @@ function ScopeChanges({ previous, proposed }) {
   </ul>
 }
 
-export function Specialists({ request, mark, close }) {
+function StartRun({ specialist, catalog, start }) {
+  const [goal, setGoal] = useState('')
+  const [selected, select] = useState('')
+  const [id, setID] = useState(() => crypto.randomUUID())
+  const [busy, setBusy] = useState(false)
+  const [status, setStatus] = useState('')
+  const [error, setError] = useState('')
+  const eligible = specialist.configuration.projects.filter(project =>
+    catalog.some(item => item.id === project.id && item.binding === project.binding))
+  const project = eligible.find(item => item.id === selected)
+  if (!eligible.length) return <p>Update the approved project bindings before starting a run.</p>
+
+  async function submit(event) {
+    event.preventDefault()
+    if (busy || !project || !goal.trim()) return
+    setBusy(true)
+    setError('')
+    setStatus('')
+    try {
+      const task = await start({
+        request_id: id, goal, specialist_id: specialist.id, revision: specialist.revision,
+        project: project.id, binding: project.binding,
+      })
+      setGoal('')
+      select('')
+      setID(crypto.randomUUID())
+      setStatus('Run queued as goal ' + task.id + '.')
+    } catch (err) {
+      setError(err.status ? err.message : 'Couldn’t confirm the start. Retry with the same selection to recover the queued run.')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return <details className="specialist-record">
+    <summary>Run this specialist</summary>
+    <form onSubmit={submit}>
+      <p>{specialist.configuration.name} · Revision {specialist.revision}</p>
+      <p>{specialist.configuration.access}</p>
+      <label className="specialist-field">Run project
+        <select value={selected} disabled={busy} onChange={event => { select(event.target.value); setID(crypto.randomUUID()) }}>
+          <option value="">Choose an approved project</option>
+          {eligible.map(item => <option key={item.id} value={item.id}>{item.name} ({item.id} · {item.label})</option>)}
+        </select>
+      </label>
+      <label className="specialist-field">Run goal
+        <textarea maxLength={4096} required value={goal} readOnly={busy}
+          onChange={event => { setGoal(event.target.value); setID(crypto.randomUUID()) }} />
+      </label>
+      {error && <p role="alert">{error}</p>}
+      <p role="status">{status}</p>
+      <button className="primary" disabled={busy || !project || !goal.trim()}>{busy ? 'Starting…' : 'Start run'}</button>
+    </form>
+  </details>
+}
+
+export function Specialists({ request, mark, close, onQueued }) {
   const [state, setState] = useState(null)
   const [draft, setDraft] = useState(null)
   const [inspected, inspect] = useState(0)
@@ -154,7 +210,7 @@ export function Specialists({ request, mark, close }) {
           </label>}
           {current && <article className="specialist-record">
             <h3>{current.configuration.name}</h3>
-            <p>{current.enabled ? 'Enabled · Runs unavailable' : 'Disabled'} · Revision {current.revision}</p>
+            <p>{current.enabled ? 'Enabled' : 'Disabled'} · Revision {current.revision}</p>
             <Configuration config={current.configuration} catalog={state.projects} />
             {current.enabled && <div className="specialist-actions">
               <button className="subtle" disabled={busy || !!draft || !state.projects.length}
@@ -162,6 +218,11 @@ export function Specialists({ request, mark, close }) {
               <button className="subtle" disabled={busy || !!draft}
                 onClick={() => propose(draftFor('disable', current.id, current.revision))}>Review disable</button>
             </div>}
+            {current.enabled && <StartRun key={current.id + ':' + current.revision} specialist={current} catalog={state.projects} start={async input => {
+              const task = await post('/specialist-runs', input)
+              onQueued(task)
+              return task
+            }} />}
           </article>}
           {draft && <form className="specialist-record" onSubmit={event => { event.preventDefault(); propose(draft) }}>
             <h3>{draft.action === 'create' ? 'What should this specialist do?' : 'What should change?'}</h3>

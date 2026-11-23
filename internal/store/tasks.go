@@ -14,15 +14,17 @@ const (
 )
 
 type Task struct {
-	ID       int64     `json:"id"`
-	Goal     string    `json:"goal"`
-	Status   string    `json:"status"`
-	Decision *Decision `json:"decision,omitempty"`
-	Attempt  *Attempt  `json:"attempt,omitempty"`
+	ID       int64          `json:"id"`
+	Goal     string         `json:"goal"`
+	Status   string         `json:"status"`
+	Decision *Decision      `json:"decision,omitempty"`
+	Run      *SpecialistRun `json:"specialist_run,omitempty"`
+	Attempt  *Attempt       `json:"attempt,omitempty"`
 }
 
 type Attempt struct {
 	ID             int64      `json:"id"`
+	Status         string     `json:"status,omitempty"`
 	Number         int        `json:"number"`
 	LeaseExpiresAt time.Time  `json:"lease_expires_at"`
 	CompletedAt    *time.Time `json:"completed_at,omitempty"`
@@ -48,7 +50,7 @@ func (s Tasks) Create(ctx context.Context, goal string) (Task, error) {
 	err := s.DB.QueryRowContext(ctx, `
 		WITH saved AS (
 			INSERT INTO tasks (goal, decision_id)
-			VALUES ($1, (SELECT id FROM project_decisions ORDER BY id DESC LIMIT 1))
+			VALUES ($1, (SELECT id FROM project_decisions WHERE project_id = '' ORDER BY id DESC LIMIT 1))
 			RETURNING id, decision_id
 		)
 		SELECT saved.id, d.id, d.body FROM saved LEFT JOIN project_decisions d ON d.id = saved.decision_id`, goal).
@@ -68,11 +70,11 @@ const taskQuery = `
 				WHEN a.attempt_number = $1 THEN 'exhausted'
 				ELSE 'queued'
 			END,
-			a.id, a.attempt_number, a.lease_expires_at, a.completed_at, a.exit_code, a.output, a.blocked, a.artifacts, a.snapshot, d.id, d.body
+			a.id, a.attempt_number, a.lease_expires_at, a.completed_at, a.exit_code, a.output, a.blocked, a.artifacts, a.snapshot, d.id, d.body, ` + runMetadata + `
 		FROM tasks t LEFT JOIN project_decisions d ON d.id = t.decision_id LEFT JOIN LATERAL (
 			SELECT id, attempt_number, lease_expires_at, completed_at, exit_code, output, blocked, artifacts, snapshot
 			FROM attempts WHERE task_id = t.id ORDER BY attempt_number DESC LIMIT 1
-		) a ON true`
+		) a ON true` + runJoins
 
 func (s Tasks) Get(ctx context.Context, id int64) (Task, error) {
 	return scanTask(s.DB.QueryRowContext(ctx, taskQuery+" WHERE t.id = $2", maxAttempts, id))
@@ -107,10 +109,10 @@ func scanTask(row interface{ Scan(...any) error }) (Task, error) {
 	var artifacts *string
 	var decisionID *int64
 	var decisionBody *string
-	var snapshot []byte
+	var snapshot, run []byte
 	err := row.Scan(
 		&task.ID, &task.Goal, &task.Status, &attemptID, &number, &leaseExpiresAt,
-		&attempt.CompletedAt, &exitCode, &output, &blocked, &artifacts, &snapshot, &decisionID, &decisionBody)
+		&attempt.CompletedAt, &exitCode, &output, &blocked, &artifacts, &snapshot, &decisionID, &decisionBody, &run)
 	if err == nil && decisionID != nil {
 		task.Decision = &Decision{ID: *decisionID, Body: *decisionBody}
 	}
@@ -126,42 +128,71 @@ func scanTask(row interface{ Scan(...any) error }) (Task, error) {
 		}
 		task.Attempt = &attempt
 	}
+	if err == nil && run != nil {
+		err = json.Unmarshal(run, &task.Run)
+	}
 	return task, err
 }
 
-func (s Tasks) Claim(ctx context.Context) (Task, error) {
+func (s Tasks) Claim(ctx context.Context, project SpecialistProject) (Task, error) {
 	for {
-		task, retry, err := s.claim(ctx)
+		task, retry, err := s.claim(ctx, project)
 		if !retry {
 			return task, err
 		}
 	}
 }
 
-func (s Tasks) claim(ctx context.Context) (Task, bool, error) {
+func (s Tasks) claim(ctx context.Context, project SpecialistProject) (Task, bool, error) {
 	tx, err := s.DB.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelReadCommitted})
 	if err != nil {
 		return Task{}, false, err
 	}
 	defer tx.Rollback()
 
-	task := Task{Status: "claimed"}
-	var decisionID *int64
-	var decisionBody *string
+	var taskID int64
 	err = tx.QueryRowContext(ctx, `
-		SELECT t.id, t.goal, d.id, d.body FROM tasks t
-		LEFT JOIN project_decisions d ON d.id = t.decision_id
+		SELECT t.id FROM tasks t
+		LEFT JOIN specialist_runs sr ON sr.task_id = t.id
+		LEFT JOIN specialist_revisions pinned ON (pinned.specialist_id, pinned.revision) = (sr.specialist_id, sr.revision)
+		LEFT JOIN specialist_proposals approved ON approved.id = pinned.proposal_id
 		LEFT JOIN LATERAL (
 			SELECT attempt_number, lease_expires_at, completed_at
 			FROM attempts WHERE task_id = t.id ORDER BY attempt_number DESC LIMIT 1
 		) a ON true
-		WHERE a.attempt_number IS NULL OR (
+		WHERE ((sr.task_id IS NULL AND $2 = '') OR (
+			sr.project->>'id' = $2 AND sr.project->>'binding' = $3
+			AND approved.configuration->>'profile' = $4 AND approved.configuration->>'access' = $5
+			AND EXISTS (
+				SELECT 1 FROM specialists s
+				JOIN specialist_revisions r ON (r.specialist_id, r.revision) = (s.id, s.revision)
+				JOIN specialist_proposals p ON p.id = r.proposal_id
+				WHERE s.id = sr.specialist_id AND s.enabled
+				AND p.configuration->>'profile' = $4 AND p.configuration->>'access' = $5
+				AND p.configuration->'projects' @> jsonb_build_array(jsonb_build_object('id', $2::text, 'binding', $3::text))
+			)
+		)) AND (a.attempt_number IS NULL OR (
 			a.completed_at IS NULL AND a.lease_expires_at <= statement_timestamp()
 			AND a.attempt_number < $1
-		)
-		ORDER BY t.id LIMIT 1 FOR UPDATE OF t SKIP LOCKED`, maxAttempts).Scan(&task.ID, &task.Goal, &decisionID, &decisionBody)
+		))
+		ORDER BY t.id LIMIT 1 FOR UPDATE OF t SKIP LOCKED`,
+		maxAttempts, project.ID, project.Binding, specialistProfile, specialistAccess).Scan(&taskID)
 	if err != nil {
 		return Task{}, false, err
+	}
+
+	task, err := scanTask(tx.QueryRowContext(ctx, taskQuery+` WHERE t.id = $2`, maxAttempts, taskID))
+	if err != nil {
+		return Task{}, false, err
+	}
+	if task.Run != nil {
+		current, err := lockSpecialist(ctx, tx, task.Run.SpecialistID)
+		if err != nil {
+			return Task{}, false, err
+		}
+		if !authorizesProject(current, project) {
+			return Task{}, true, nil
+		}
 	}
 
 	// Recheck with a fresh snapshot after taking the task lock. Lock the
@@ -186,10 +217,8 @@ func (s Tasks) claim(ctx context.Context) (Task, bool, error) {
 	if err != nil {
 		return Task{}, errors.Is(err, sql.ErrNoRows), err
 	}
+	task.Status = "claimed"
 	task.Attempt = &attempt
-	if decisionID != nil {
-		task.Decision = &Decision{ID: *decisionID, Body: *decisionBody}
-	}
 	return task, false, tx.Commit()
 }
 

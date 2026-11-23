@@ -14,10 +14,14 @@ import (
 	"github.com/nep-ai/difqo/internal/store"
 )
 
-func registerDecisions(router *http.ServeMux, tasks store.Tasks) {
+func registerDecisions(router *http.ServeMux, tasks store.Tasks, specialists store.Specialists) {
 	router.HandleFunc("GET /project-decision", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Cache-Control", "no-store")
-		decision, err := tasks.LatestDecision(r.Context())
+		project, ok := decisionProject(w, r, specialists)
+		if !ok {
+			return
+		}
+		decision, err := tasks.LatestDecision(r.Context(), project)
 		if errors.Is(err, sql.ErrNoRows) {
 			w.WriteHeader(http.StatusNoContent)
 			return
@@ -40,13 +44,30 @@ func registerDecisions(router *http.ServeMux, tasks store.Tasks) {
 			http.Error(w, "decision must contain 1–4096 characters and no NUL", http.StatusBadRequest)
 			return
 		}
-		decision, err := tasks.SaveDecision(r.Context(), body)
+		project, ok := decisionProject(w, r, specialists)
+		if !ok {
+			return
+		}
+		decision, err := tasks.SaveDecision(r.Context(), body, project)
 		if err != nil {
 			storeError(w, err)
 			return
 		}
 		writeJSON(w, http.StatusCreated, decision)
 	})
+}
+
+func decisionProject(w http.ResponseWriter, r *http.Request, specialists store.Specialists) (store.SpecialistProject, bool) {
+	id := r.URL.Query().Get("project")
+	if id == "" {
+		return store.SpecialistProject{}, true
+	}
+	project, found := specialists.Project(id)
+	if !found || project.Binding != r.URL.Query().Get("binding") {
+		http.Error(w, "project binding changed or is unavailable; reload the project catalog", http.StatusConflict)
+		return store.SpecialistProject{}, false
+	}
+	return project, true
 }
 
 func registerReview(router *http.ServeMux, tasks store.Tasks, artifacts *os.Root, runtimeChoice string) {
