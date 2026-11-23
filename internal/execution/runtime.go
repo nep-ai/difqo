@@ -19,14 +19,17 @@ type containerRuntime struct {
 	disableSELinuxLabel bool
 }
 
-func (o Options) resolveRuntime() (containerRuntime, error) {
+func (o Options) resolveRuntime(ctx context.Context) (containerRuntime, error) {
 	candidates := []string{o.Runtime}
 	if o.Runtime == "" || o.Runtime == "auto" {
 		candidates = []string{"docker", "podman"}
 	}
 	var failures []error
 	for _, candidate := range candidates {
-		runtime, err := o.probeRuntime(candidate)
+		runtime, err := o.probeRuntime(ctx, candidate)
+		if ctx.Err() != nil {
+			return containerRuntime{}, ctx.Err()
+		}
 		if err == nil {
 			return runtime, nil
 		}
@@ -35,7 +38,7 @@ func (o Options) resolveRuntime() (containerRuntime, error) {
 	return containerRuntime{}, fmt.Errorf("no usable container runtime; task was not claimed: %w", errors.Join(failures...))
 }
 
-func (o Options) probeRuntime(candidate string) (containerRuntime, error) {
+func (o Options) probeRuntime(ctx context.Context, candidate string) (containerRuntime, error) {
 	executable, err := exec.LookPath(candidate)
 	if err != nil {
 		return containerRuntime{}, errors.New("CLI executable is unavailable")
@@ -49,7 +52,7 @@ func (o Options) probeRuntime(candidate string) (containerRuntime, error) {
 	if runtime.podman {
 		info = append(info, "--format", "{{.Host.Security.Rootless}}")
 	}
-	out, err := runtime.inspect(info...)
+	out, err := runtime.inspect(ctx, info...)
 	if err != nil {
 		return runtime, errors.New("engine is unavailable; check the connection and engine status")
 	}
@@ -63,14 +66,14 @@ func (o Options) probeRuntime(candidate string) (containerRuntime, error) {
 		}
 		runtime.disableSELinuxLabel = o.DisableSELinuxLabel
 	}
-	if _, err := runtime.inspect("image", "inspect", o.Image); err != nil {
+	if _, err := runtime.inspect(ctx, "image", "inspect", o.Image); err != nil {
 		return runtime, fmt.Errorf("image %q is unavailable locally; build or load it into this engine", o.Image)
 	}
-	return runtime, o.probeContainers(runtime)
+	return runtime, o.probeContainers(ctx, runtime)
 }
 
-func (r containerRuntime) inspect(args ...string) (string, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+func (r containerRuntime) inspect(ctx context.Context, args ...string) (string, error) {
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, r.executable, args...)
 	cmd.WaitDelay = time.Second
@@ -81,7 +84,7 @@ func (r containerRuntime) inspect(args ...string) (string, error) {
 	return string(out), err
 }
 
-func (o Options) probeContainers(runtime containerRuntime) error {
+func (o Options) probeContainers(ctx context.Context, runtime containerRuntime) error {
 	if err := os.MkdirAll(o.ArtifactRoot, 0o700); err != nil {
 		return errors.New("could not create the artifact directory")
 	}
@@ -101,7 +104,7 @@ func (o Options) probeContainers(runtime containerRuntime) error {
 		return errors.New("could not prepare a test file in the dedicated Codex home")
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	ctx, cancel := context.WithTimeout(ctx, 20*time.Second)
 	defer cancel()
 	c := container{name: filepath.Base(workspace), image: o.Image, workspace: workspace, runtime: runtime}
 	code, err := c.capture(ctx, io.Discard, io.Discard,

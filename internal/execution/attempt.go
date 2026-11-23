@@ -21,7 +21,7 @@ type Options struct {
 	runtime                              containerRuntime
 }
 
-func (o *Options) Validate(repo string) error {
+func (o *Options) Validate(ctx context.Context, repo string) error {
 	o.runtime = containerRuntime{}
 	if o.Image == "" || strings.HasPrefix(o.Image, "-") || strings.TrimSpace(o.Check) == "" {
 		return errors.New("Codex execution requires a local image and a check command")
@@ -49,7 +49,7 @@ func (o *Options) Validate(repo string) error {
 	if rel, err := filepath.Rel(authHome, o.ArtifactRoot); err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(os.PathSeparator)) {
 		return errors.New("use a dedicated Difqo Codex home")
 	}
-	o.runtime, err = o.resolveRuntime()
+	o.runtime, err = o.resolveRuntime(ctx)
 	return err
 }
 

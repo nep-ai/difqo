@@ -2,11 +2,13 @@ package execution
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestRuntimeSelection(t *testing.T) {
@@ -40,7 +42,7 @@ func TestRuntimeSelection(t *testing.T) {
 			if tc.choice == "my container cli" {
 				options.Runtime = filepath.Join(bin, tc.choice)
 			}
-			err := options.Validate(t.TempDir())
+			err := options.Validate(context.Background(), t.TempDir())
 			if tc.wantError != "" {
 				if err == nil || !strings.Contains(err.Error(), tc.wantError) || options.runtime.executable != "" {
 					t.Fatalf("runtime = %+v, error = %v", options.runtime, err)
@@ -71,6 +73,59 @@ func TestRuntimeSelection(t *testing.T) {
 	}
 }
 
+func TestCanceledRuntimeProbeCleansUp(t *testing.T) {
+	bin := t.TempDir()
+	logPath := filepath.Join(bin, "invocations")
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	t.Setenv("DIFQO_TEST_RUNTIME_LOG", logPath)
+	writeRuntimeStub(t, bin, "docker", "wait")
+	writeRuntimeStub(t, bin, "podman", "")
+	auth := filepath.Join(t.TempDir(), "auth")
+	if err := os.Mkdir(auth, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	options := Options{Image: "fixture:latest", Check: "true", ArtifactRoot: t.TempDir(), AuthHome: auth}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	repo := t.TempDir()
+	done := make(chan error, 1)
+	go func() {
+		done <- options.Validate(ctx, repo)
+	}()
+	ticker := time.NewTicker(10 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		data, _ := os.ReadFile(logPath)
+		if strings.Contains(string(data), "sandbox-started\n") {
+			break
+		}
+		select {
+		case <-ticker.C:
+		case <-ctx.Done():
+			t.Fatal("sandbox probe did not start")
+		}
+	}
+	cancel()
+	select {
+	case err := <-done:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("expected canceled preflight, got %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("preflight did not return after cancellation")
+	}
+	log, err := os.ReadFile(logPath)
+	if err != nil || !strings.HasSuffix(string(log), "sandbox-started\ndocker:rm\n") || strings.Contains(string(log), "podman:") {
+		t.Fatalf("expected cleanup without runtime fallback, got %q (%v)", log, err)
+	}
+	for _, dir := range []string{options.ArtifactRoot, auth} {
+		entries, err := os.ReadDir(dir)
+		if err != nil || len(entries) != 0 {
+			t.Fatalf("preflight left files in %s: %v (%v)", dir, entries, err)
+		}
+	}
+}
+
 func writeRuntimeStub(t *testing.T, dir, name, failure string) {
 	t.Helper()
 	script := `#!/bin/sh
@@ -91,6 +146,10 @@ case "$1" in
       esac
     done
     if [ '` + failure + `' = sandbox ] && [ "$marker" = sandbox-ready ]; then exit 125; fi
+    if [ '` + failure + `' = wait ] && [ "$marker" = sandbox-ready ]; then
+      printf 'sandbox-started\n' >> "$DIFQO_TEST_RUNTIME_LOG"
+      exec sleep 30
+    fi
     touch "$workspace/$marker"
     ;;
   *) exit 125 ;;

@@ -67,6 +67,8 @@ func run(args []string) error {
 		if *repo == "" {
 			return errors.New("worker requires -repo PATH")
 		}
+		ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+		defer cancel()
 		var runOptions *execution.Options
 		if options != (execution.Options{}) {
 			resolved, err := filepath.Abs(*repo)
@@ -74,13 +76,11 @@ func run(args []string) error {
 				return err
 			}
 			*repo = resolved
-			if err := options.Validate(*repo); err != nil {
+			if err := options.Validate(ctx, *repo); err != nil {
 				return err
 			}
 			runOptions = &options
 		}
-		ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-		defer cancel()
 		return worker.Run(ctx, "http://"+address, *repo, runOptions)
 	}
 
