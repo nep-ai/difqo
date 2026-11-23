@@ -78,7 +78,8 @@ function PatchReview({ goal }) {
   const [review, setReview] = useState(null)
   const [busy, setBusy] = useState('')
   const [refresh, setRefresh] = useState(0)
-  const [error, setError] = useState('')
+  const [loadFailed, setLoadFailed] = useState(false)
+  const [actionError, setActionError] = useState('')
   const { result } = goal.attempt
   const snapshot = result.snapshot
   const endpoint = '/tasks/' + goal.id + '/review'
@@ -96,11 +97,12 @@ function PatchReview({ goal }) {
         const data = await response.json()
         if (controller.signal.aborted) return
         setReview(data)
+        setLoadFailed(false)
         if (data.check?.status === 'running') timer = setTimeout(load, 2000)
       } catch {
         if (!controller.signal.aborted) {
           setReview(null)
-          setError('Couldn’t load patch review.')
+          setLoadFailed(true)
         }
       }
     }
@@ -113,7 +115,7 @@ function PatchReview({ goal }) {
 
   async function act(action) {
     setBusy(action)
-    setError('')
+    setActionError('')
     try {
       await request(endpoint + '/' + action, {
         method: 'POST',
@@ -122,7 +124,7 @@ function PatchReview({ goal }) {
         body: JSON.stringify({ patch_sha256: snapshot.patch_sha256, check_id: check?.id }),
       })
     } catch (err) {
-      setError(err instanceof RequestError && err.status === 409
+      setActionError(err instanceof RequestError && err.status === 409
         ? err.message
         : 'Couldn’t confirm the action. Review the current status before retrying.')
     } finally {
@@ -151,15 +153,17 @@ function PatchReview({ goal }) {
     </dl>
     <Evidence id={goal.id} file="change.diff" label="View patch" download />
     <Evidence id={goal.id} file="check.log" label="View original check log" />
+    {result.exit_code !== 0 && <Evidence id={goal.id} file="execution.log" label="View execution diagnostic" />}
     {check?.output && !running && <details>
       <summary>View rerun log</summary>
       <pre className="output" tabIndex={0} aria-label="Rerun log">{check.output}</pre>
     </details>}
-    {open && !review && !busy && !error && <p role="status">Loading review…</p>}
+    {open && !review && !busy && !loadFailed && <p role="status">Loading review…</p>}
     {status && <p role="status" className="review-status">{status}</p>}
-    {error && <p role="alert">{error}</p>}
+    {loadFailed && <p role="alert">Couldn’t load patch review.</p>}
+    {actionError && <p role="alert">{actionError}</p>}
     <div className="actions">
-      {!review && error && <button onClick={() => { setError(''); setRefresh(value => value + 1) }}>Refresh review</button>}
+      {!review && loadFailed && <button onClick={() => { setLoadFailed(false); setRefresh(value => value + 1) }}>Refresh review</button>}
       {review?.patch_available && !approved && <>
         <button disabled={running || Boolean(busy)} onClick={() => act('rerun')}>Rerun check</button>
         <button className="primary" disabled={running || Boolean(busy) || check?.status !== 'passed'} onClick={() => act('approve')}>Approve patch</button>
@@ -176,22 +180,27 @@ function ProjectDecision({ dialog }) {
   const [ready, setReady] = useState(false)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
+  const pendingLoad = useRef(null)
 
   async function load() {
+    pendingLoad.current?.abort()
+    const controller = new AbortController()
+    pendingLoad.current = controller
     dialog.current.showModal()
     setLoading(true)
     setReady(false)
     setError('')
     try {
-      const response = await request('/project-decision')
+      const response = await request('/project-decision', { signal: controller.signal })
       const current = response.status === 204 ? null : await response.json()
+      if (controller.signal.aborted) return
       setBody(current?.body ?? '')
       setRevision(current?.id ?? null)
       setReady(true)
     } catch {
-      setError('Couldn’t load the saved decision. Reopen this dialog to try again.')
+      if (!controller.signal.aborted) setError('Couldn’t load the saved decision. Reopen this dialog to try again.')
     } finally {
-      setLoading(false)
+      if (!controller.signal.aborted) setLoading(false)
     }
   }
 
@@ -216,7 +225,10 @@ function ProjectDecision({ dialog }) {
 
   return <>
     <button type="button" className="decision-trigger" onClick={load}>Project decision</button>
-    <dialog ref={dialog} aria-labelledby="decision-title" onCancel={event => { if (saving) event.preventDefault() }}>
+    <dialog ref={dialog} aria-labelledby="decision-title" onCancel={event => {
+      if (saving) event.preventDefault()
+      else pendingLoad.current?.abort()
+    }}>
       <h2 id="decision-title">Project decision</h2>
       <p>New goals use the latest saved revision.</p>
       <form onSubmit={save}>
@@ -226,7 +238,10 @@ function ProjectDecision({ dialog }) {
         {loading && <p role="status">Loading decision…</p>}
         {error && <p role="alert">{error}</p>}
         <div className="actions">
-          <button type="button" disabled={saving} onClick={() => dialog.current.close()}>Cancel</button>
+          <button type="button" disabled={saving} onClick={() => {
+            pendingLoad.current?.abort()
+            dialog.current.close()
+          }}>Cancel</button>
           <button className="primary" disabled={!ready || saving || !body.trim()}>{saving ? 'Saving…' : 'Save decision'}</button>
         </div>
       </form>
