@@ -13,8 +13,8 @@ import (
 )
 
 type container struct {
-	name, image, workspace string
-	runtime                containerRuntime
+	name, workspace string
+	runtime         containerRuntime
 }
 
 const codexPermissions = `permissions={difqo={extends=":workspace",filesystem={":root"="deny",":minimal"="read","/usr/local"="read","/codex-home"="deny"}}}`
@@ -45,7 +45,7 @@ func (c container) command(ctx context.Context, authHome string, args ...string)
 			options = append(options, "--security-opt=label=disable")
 		}
 	}
-	options = append(options, c.image)
+	options = append(options, c.runtime.imageID)
 	return exec.CommandContext(ctx, c.runtime.executable, append(options, args...)...)
 }
 

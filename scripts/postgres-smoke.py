@@ -1,6 +1,7 @@
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import closing
 from datetime import datetime
+from hashlib import sha256
 from pathlib import Path
 from tempfile import TemporaryDirectory
 import json
@@ -38,7 +39,7 @@ with TemporaryDirectory(prefix='difqo-smoke-') as scratch:
         reserved.bind(('127.0.0.1', 0))
         port = str(reserved.getsockname()[1])
 
-    def api(path, method='GET', body=None, headers=None):
+    def api(path, method='GET', body=None, headers=None, timeout=2):
         request = urllib.request.Request(
             f'http://127.0.0.1:{port}{path}',
             data=None if body is None else json.dumps(body).encode(),
@@ -46,14 +47,17 @@ with TemporaryDirectory(prefix='difqo-smoke-') as scratch:
             headers=headers or {'Content-Type': 'application/json'},
         )
         try:
-            with urllib.request.urlopen(request, timeout=2) as res:
+            with urllib.request.urlopen(request, timeout=timeout) as res:
                 body = res.read()
                 return res.status, json.loads(body) if body else None
         except urllib.error.HTTPError as error:
             return error.code, None
 
+    runtime = os.environ.get('DIFQO_SMOKE_CONTAINER_RUNTIME', 'docker')
+
     def start():
-        server = subprocess.Popen([binary, 'server', '-port', port, '-artifacts', artifacts])
+        server = subprocess.Popen([binary, 'server', '-port', port, '-artifacts', artifacts,
+                                   '-container-runtime', runtime])
         for _ in range(300):
             try:
                 if api('/tasks/1')[0] in (200, 404):
@@ -178,7 +182,6 @@ with TemporaryDirectory(prefix='difqo-smoke-') as scratch:
         print('Local smoke passed: fixed checks, exclusive claims, renewable leases, interrupted worker recovery, stale results, retry exhaustion, and restart persistence')
 
         if os.environ.get('DIFQO_SMOKE_CODEX') == '1':
-            runtime = os.environ.get('DIFQO_SMOKE_CONTAINER_RUNTIME', 'docker')
             runtime_options = ['-container-runtime', runtime]
             if os.environ.get('DIFQO_SMOKE_SELINUX_LABEL_DISABLE') == '1':
                 runtime_options.append('-container-selinux-label-disable')
@@ -191,27 +194,36 @@ with TemporaryDirectory(prefix='difqo-smoke-') as scratch:
                 '-c', 'user.email=smoke@example.invalid', '-c', 'commit.gpgSign=false',
                 'commit', '-qm', 'Add fixture greeting')
 
-            def worker_args(image):
+            assert api('/project-decision') == (204, None)
+            assert api('/project-decision', 'POST', {'body': ' '})[0] == 400
+            _, decision = api('/project-decision', 'POST', {'body': 'Use the line after in greeting.txt.'})
+            assert api('/project-decision') == (200, decision)
+            base = run('git', '-C', fixture, 'rev-parse', 'HEAD').strip()
+            check = ('test "$(git rev-parse HEAD)" = ' + base +
+                     ' && test "$(cat greeting.txt)" = after && test "$(cat untracked.txt)" = "new file"'
+                     ' && test ! -e /codex-home && printf "greeting check passed\\n"')
+
+            def worker_args(image, command):
                 return [binary, 'worker', '-port', port, '-repo', fixture,
                         '-codex-image', image, '-codex-home', auth_home, '-artifacts', artifacts,
-                        '-check', 'test "$(cat greeting.txt)" = after && printf "greeting check passed\\n"']
+                        '-check', command]
 
             def containers():
                 return run(runtime, 'ps', '-a', '--filter', 'name=difqo-', '-q').splitlines()
 
-            def run_codex(image, verify_preflight=False):
+            def run_codex(image, command=check, verify_preflight=False):
                 status, submitted = api('/tasks', 'POST', {'goal': 'Replace the fixture greeting'})
                 assert status == 201
                 path = f"/tasks/{submitted['id']}"
                 if verify_preflight:
                     rejected = subprocess.run(
-                        worker_args('difqo-smoke-image-does-not-exist:missing') + runtime_options,
+                        worker_args('difqo-smoke-image-does-not-exist:missing', command) + runtime_options,
                         capture_output=True, text=True, timeout=45,
                     )
                     assert rejected.returncode != 0 and 'unavailable locally' in rejected.stderr, rejected.stderr
                     assert api(path) == (200, submitted)
                 before = set(containers())
-                subprocess.run(worker_args(image) + runtime_options, check=True, timeout=90)
+                subprocess.run(worker_args(image, command) + runtime_options, check=True, timeout=90)
                 assert set(containers()) <= before
                 status, task = api(path)
                 assert status == 200
@@ -224,7 +236,9 @@ with TemporaryDirectory(prefix='difqo-smoke-') as scratch:
             }
             assert list(artifacts.iterdir()) == []
 
-            executed = run_codex(os.environ.get('DIFQO_SMOKE_FIXTURE_IMAGE', 'difqo-codex-smoke'))
+            fixture_image = os.environ.get('DIFQO_SMOKE_FIXTURE_IMAGE', 'difqo-codex-smoke')
+            failed_check = run_codex(fixture_image, 'exit 7')
+            executed = run_codex(fixture_image)
             assert executed['status'] == 'completed'
             outcome = executed['attempt']['result']
             assert outcome['exit_code'] == 0, outcome
@@ -242,6 +256,85 @@ with TemporaryDirectory(prefix='difqo-smoke-') as scratch:
             assert api(f"/tasks/{executed['id']}/evidence/auth.json")[0] == 404
             assert greeting.read_text() == 'before\n' and not (fixture / 'untracked.txt').exists()
             assert not (evidence / 'workspace').exists()
+            assert not (evidence / 'check-workspace').exists()
+            assert executed['decision'] == decision
+            snapshot = outcome['snapshot']
+            assert snapshot['base'] == base and snapshot['command'] == check
+            image_id = run(runtime, 'image', 'inspect', '--format', '{{.Id}}', fixture_image).strip()
+            assert snapshot['image'] == 'sha256:' + image_id.removeprefix('sha256:')
+            assert snapshot['patch_sha256'] == sha256(patch.encode()).hexdigest()
+
+            assert api('/project-decision', 'POST', {'body': 'Use a newer decision for future goals.'})[0] == 201
+            assert api(f"/tasks/{executed['id']}")[1]['decision'] == decision
+
+            # Move HEAD and leave a dirty file. Review must read neither from the source checkout.
+            run('git', '-C', fixture, '-c', 'user.name=Difqo Smoke',
+                '-c', 'user.email=smoke@example.invalid', '-c', 'commit.gpgSign=false',
+                'commit', '--allow-empty', '-qm', 'Advance the source checkout')
+            before_review = set(containers())
+            current_head = run('git', '-C', fixture, 'rev-parse', 'HEAD')
+            greeting.write_text('unsaved source change\n')
+            original_status = run('git', '-C', fixture, 'status', '--porcelain')
+
+            failed_path = f"/tasks/{failed_check['id']}/review"
+            failed_identity = {'patch_sha256': failed_check['attempt']['result']['snapshot']['patch_sha256']}
+            assert api(failed_path + '/rerun', 'POST', failed_identity, timeout=55)[0] == 204
+            failed_rerun = api(failed_path)[1]['check']
+            assert failed_rerun['status'] == 'failed' and failed_rerun['exit_code'] == 7
+            assert api(failed_path + '/approve', 'POST', {**failed_identity, 'check_id': failed_rerun['id']})[0] == 409
+
+            review_path = f"/tasks/{executed['id']}/review"
+            identity = {'patch_sha256': snapshot['patch_sha256']}
+            assert api(review_path) == (200, {'patch_available': True})
+            assert api(review_path + '/approve', 'POST', identity)[0] == 409
+            assert api(review_path + '/rerun', 'POST', {'patch_sha256': 'changed'})[0] == 409
+            assert api(review_path + '/rerun', 'POST', identity, timeout=55)[0] == 204
+            passed = api(review_path)[1]['check']
+            assert passed['status'] == 'passed' and passed['output'] == 'greeting check passed\n'
+
+            # An interrupted newer check cannot fall back to a previous pass.
+            attempt_id = int(executed['attempt']['id'])
+            run('psql', '-X', os.environ['DIFQO_DATABASE_URL'], '-v', 'ON_ERROR_STOP=1',
+                '-c', f"INSERT INTO review_checks (attempt_id) VALUES ({attempt_id})")
+            assert api(review_path)[1]['check']['status'] == 'running'
+            assert api(review_path + '/rerun', 'POST', identity)[0] == 409
+            assert api(review_path + '/approve', 'POST', {**identity, 'check_id': passed['id']})[0] == 409
+            run('psql', '-X', os.environ['DIFQO_DATABASE_URL'], '-v', 'ON_ERROR_STOP=1',
+                '-c', f"UPDATE review_checks SET started_at = clock_timestamp() - interval '61 seconds' "
+                      f'WHERE attempt_id = {attempt_id} AND completed_at IS NULL')
+            assert api(review_path)[1]['check']['status'] == 'interrupted'
+            assert api(review_path + '/approve', 'POST', {**identity, 'check_id': passed['id']})[0] == 409
+
+            assert api(review_path + '/rerun', 'POST', identity, timeout=55)[0] == 204
+            rerun = api(review_path)[1]['check']
+            assert rerun['status'] == 'passed' and rerun['id'] != passed['id']
+            assert api(review_path + '/approve', 'POST', {**identity, 'check_id': passed['id']})[0] == 409
+
+            saved_patch = evidence / 'change.diff'
+            saved_patch.write_text(patch + 'tampered\n')
+            assert not api(review_path)[1]['patch_available']
+            assert api(review_path + '/approve', 'POST', {**identity, 'check_id': rerun['id']})[0] == 409
+            assert api(review_path + '/rerun', 'POST', identity)[0] == 409
+            assert api(f"/tasks/{executed['id']}/evidence/change.diff")[0] == 409
+            saved_patch.write_text(patch)
+
+            approval = {**identity, 'check_id': rerun['id']}
+            assert api(review_path + '/approve', 'POST', approval)[0] == 204
+            approved = api(review_path)[1]
+            assert approved['approval']['check_id'] == rerun['id']
+            assert api(review_path + '/approve', 'POST', approval)[0] == 204
+            assert api(review_path + '/rerun', 'POST', identity)[0] == 409
+            server.terminate()
+            server.wait(timeout=5)
+            server = start()
+            assert api(review_path) == (200, approved)
+            assert run('git', '-C', fixture, 'rev-parse', 'HEAD') == current_head
+            assert run('git', '-C', fixture, 'status', '--porcelain') == original_status
+            assert greeting.read_text() == 'unsaved source change\n'
+            assert not (fixture / 'untracked.txt').exists()
+            assert not list(artifacts.glob('review-*'))
+            assert set(containers()) <= before_review
+            print('Review smoke passed: saved decision, isolated original-base rerun, stale and failed checks, patch integrity, and approval persistence')
             print(f'{runtime} smoke passed: pre-claim rejection, real Codex sign-in block, '
                   'synthetic turn, container cleanup, and evidence retrieval')
     finally:

@@ -5,9 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"net/url"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 
@@ -23,7 +21,7 @@ type Options struct {
 
 func (o *Options) Validate(ctx context.Context, repo string) error {
 	o.runtime = containerRuntime{}
-	if o.Image == "" || strings.HasPrefix(o.Image, "-") || strings.TrimSpace(o.Check) == "" {
+	if o.Image == "" || strings.HasPrefix(o.Image, "-") || strings.TrimSpace(o.Check) == "" || len(o.Check) > 4096 {
 		return errors.New("Codex execution requires a local image and a check command")
 	}
 	for _, path := range []string{o.ArtifactRoot, o.AuthHome} {
@@ -50,6 +48,9 @@ func (o *Options) Validate(ctx context.Context, repo string) error {
 		return errors.New("use a dedicated Difqo Codex home")
 	}
 	o.runtime, err = o.resolveRuntime(ctx)
+	if err != nil && ctx.Err() == nil {
+		return fmt.Errorf("task was not claimed: %w", err)
+	}
 	return err
 }
 
@@ -71,21 +72,31 @@ func (o Options) Run(ctx context.Context, repo string, task store.Task) store.Re
 		_ = os.Remove(dir) // Only remove empty attempt directories.
 	}()
 
-	localURL := (&url.URL{Scheme: "file", Path: repo}).String()
-	clone := exec.CommandContext(ctx, "git", "-c", "core.hooksPath=/dev/null",
-		"clone", "--depth=1", "--no-tags", "--single-branch", "--", localURL, workspace)
-	clone.Env = append(os.Environ(), "GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_NOSYSTEM=1")
-	if err := clone.Run(); err != nil {
+	baseRepo := filepath.Join(dir, "base.git")
+	keepBase := false
+	defer func() {
+		if !keepBase {
+			_ = os.RemoveAll(baseRepo)
+		}
+	}()
+	if err := cloneSnapshot(ctx, repo, baseRepo, "--bare"); err != nil {
 		return failure
 	}
-	readHead := exec.CommandContext(ctx, "git", "-C", workspace, "rev-parse", "--verify", "HEAD")
-	base, err := readHead.Output()
+	if err := cloneSnapshot(ctx, baseRepo, workspace); err != nil {
+		return failure
+	}
+	base, err := snapshotHead(ctx, workspace)
 	if err != nil {
 		return failure
 	}
 
-	c := container{name: "difqo-" + filepath.Base(dir), image: o.Image, workspace: workspace, runtime: o.runtime}
-	if diagnostic, err := c.codex(ctx, o.AuthHome, task.Goal); err != nil {
+	goal := task.Goal
+	if task.Decision != nil {
+		goal = fmt.Sprintf("Saved project decision (revision %d):\n%s\n\nTask goal:\n%s",
+			task.Decision.ID, task.Decision.Body, goal)
+	}
+	c := container{name: "difqo-" + filepath.Base(dir), workspace: workspace, runtime: o.runtime}
+	if diagnostic, err := c.codex(ctx, o.AuthHome, goal); err != nil {
 		if errors.Is(err, ErrAuthentication) {
 			return store.Result{ExitCode: 125, Output: "Codex sign-in required", Blocked: true}
 		}
@@ -100,26 +111,50 @@ func (o Options) Run(ctx context.Context, repo string, task store.Task) store.Re
 	diffExit, err := captureFile(dir, "change.diff", &tooLarge, func(w io.Writer) (int, error) {
 		return c.capture(ctx, w, io.Discard, `git -c core.hooksPath=/dev/null add -N -A &&
 			git -c core.hooksPath=/dev/null diff --no-ext-diff --no-textconv --binary "$1" --`,
-			strings.TrimSpace(string(base)))
+			base)
 	})
 	if err != nil || diffExit != 0 || tooLarge {
 		_ = os.Remove(filepath.Join(dir, "change.diff"))
 		return store.Result{ExitCode: 125, Output: "could not capture a complete diff"}
 	}
 
-	tooLarge = false
-	checkExit, err := captureFile(dir, "check.log", &tooLarge, func(w io.Writer) (int, error) {
-		return c.capture(ctx, w, w, o.Check)
-	})
+	patch, err := os.ReadFile(filepath.Join(dir, "change.diff"))
 	if err != nil {
-		_ = os.Remove(filepath.Join(dir, "check.log"))
-		return store.Result{ExitCode: 125, Output: "could not capture check output", Artifacts: filepath.Base(dir)}
+		return store.Result{ExitCode: 125, Output: "could not read the captured patch"}
 	}
-	output := "Codex turn and check finished"
+	result := store.Result{Artifacts: filepath.Base(dir)}
+	check := func(w io.Writer) (int, error) {
+		return c.capture(ctx, w, w, o.Check)
+	}
+	if len(patch) != 0 {
+		snapshot := store.Snapshot{Base: base, PatchSHA256: patchDigest(patch), Image: c.runtime.imageID, Command: o.Check}
+		if !ValidSnapshot(snapshot) {
+			return store.Result{ExitCode: 125, Output: "could not record the review snapshot", Artifacts: result.Artifacts}
+		}
+		result.Snapshot = &snapshot
+		keepBase = true
+		checkWorkspace := filepath.Join(dir, "check-workspace")
+		defer os.RemoveAll(checkWorkspace)
+		check = func(w io.Writer) (int, error) {
+			checkContainer := container{name: c.name, workspace: checkWorkspace, runtime: c.runtime}
+			return checkContainer.checkSnapshot(ctx, baseRepo, snapshot, patch, w)
+		}
+	}
+
+	tooLarge = false
+	checkExit, err := captureFile(dir, "check.log", &tooLarge, check)
+	if err != nil {
+		result.ExitCode = 125
+		result.Output = "could not complete the original check"
+		_ = os.WriteFile(filepath.Join(dir, "execution.log"), []byte(err.Error()+"\n"), 0o600)
+		return result
+	}
+	result.ExitCode = checkExit
+	result.Output = "Codex turn and check finished"
 	if tooLarge {
-		output = "Codex turn and check finished (check log truncated)"
+		result.Output += " (check log truncated)"
 	}
-	return store.Result{ExitCode: checkExit, Output: output, Artifacts: filepath.Base(dir)}
+	return result
 }
 
 type cappedOutput struct {
@@ -146,6 +181,6 @@ func captureFile(dir, name string, truncated *bool, capture func(io.Writer) (int
 	if err != nil {
 		return 125, err
 	}
-	code, err := capture(&cappedOutput{writer: f, remaining: 4 << 20, truncated: truncated})
+	code, err := capture(&cappedOutput{writer: f, remaining: MaxEvidenceBytes, truncated: truncated})
 	return code, errors.Join(err, f.Close())
 }

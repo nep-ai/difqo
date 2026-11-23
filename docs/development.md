@@ -13,7 +13,7 @@ set -a
 set +a
 psql "$DIFQO_DATABASE_URL" -v ON_ERROR_STOP=1 \
   -f migrations/0001_tasks.sql -f migrations/0002_attempt_leases.sql \
-  -f migrations/0003_execution_evidence.sql
+  -f migrations/0003_execution_evidence.sql -f migrations/0004_patch_review.sql
 go build -o bin/difqo ./cmd/difqo
 ./bin/difqo server
 ```
@@ -141,7 +141,7 @@ cleanup.
   and check containers retain the engine's labeling policy.
 - **Other compatible CLIs.** Pass one executable name or path to
   `-container-runtime`. It must implement Docker-style `info`,
-  `image inspect IMAGE`, `run`, and `rm -f NAME`, including the run flags in
+  `image inspect --format '{{.Id}}' IMAGE`, `run`, and `rm -f NAME`, including the run flags in
   the [container adapter](../internal/execution/container.go). It must honor the
   requested user, capability drop, read-only root, process and resource limits,
   bind mounts, network isolation, pull policy, and stdin/stdout behavior. Use a
@@ -156,7 +156,7 @@ database, and run:
 ```sh
 psql "$DIFQO_DATABASE_URL" -v ON_ERROR_STOP=1 \
   -f migrations/0001_tasks.sql -f migrations/0002_attempt_leases.sql \
-  -f migrations/0003_execution_evidence.sql
+  -f migrations/0003_execution_evidence.sql -f migrations/0004_patch_review.sql
 python3 scripts/postgres-smoke.py bin/difqo
 ```
 
@@ -168,9 +168,10 @@ database.
 
 To include container checks, build the Codex image above and the synthetic App
 Server image below with the selected runtime. Use a fresh migrated database for
-each run. These checks verify pre-claim rejection, the real App Server's missing
-sign-in status, a synthetic authenticated turn, container removal, and patch and
-log retrieval over HTTP.
+each run. The smoke test verifies pre-claim rejection, the real App Server's
+missing sign-in status, a synthetic authenticated turn, container removal, and
+patch and log retrieval over HTTP. It also verifies decision binding,
+original-base reruns, stale evidence rejection, and persisted approval.
 
 ```sh
 "$runtime" build -t difqo-codex-smoke -f scripts/fixtures/Dockerfile.codex-smoke scripts/fixtures
@@ -208,3 +209,24 @@ For frontend development, start the server on the default port, then run
 `corepack pnpm@10.34.9 --filter difqo-local-ui dev`. The Vite server proxies API
 requests to Difqo. The frontend follows the [Difqo brand guidelines](brand.md)
 and serves its fonts locally.
+
+### Review a patch
+
+1. In the Chief of Staff composer, open **Project decision** and save a
+   decision. Each new goal captures the latest saved revision.
+2. Submit a goal and run the Codex worker with an operator-selected check.
+3. Open **Review patch** under the Chief of Staff update. Inspect the decision
+   revision, base commit, patch digest, and original check. **View patch**
+   includes **Download patch**.
+4. Select **Rerun check**, then **Approve patch** after the rerun passes.
+   Approval is recorded in PostgreSQL. Apply the downloaded patch manually.
+
+Use a private artifact directory shared by the server and worker on the same
+host. Pass the same `-container-runtime` to the server and worker to use a
+specific engine for both original checks and reruns. In automatic mode the
+server tries Docker, then Podman, for the saved image ID and an offline check
+container. Reruns need neither Codex credentials nor the SELinux label
+exception for the Codex sandbox. Keep the shallow base and patch in the artifact directory
+for reruns. A changed patch file is treated as unavailable. Submit a new goal
+to review a different patch or use a different saved decision. Evidence
+captured before migration 0004 is still viewable from **View run evidence**.

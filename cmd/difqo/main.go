@@ -42,6 +42,7 @@ func run(args []string) error {
 	case "server":
 		flags.StringVar(&webPath, "web", "", "path to the built local web UI")
 		flags.StringVar(&artifactPath, "artifacts", "", "absolute path to the worker artifact directory")
+		flags.StringVar(&options.Runtime, "container-runtime", "", "auto, docker, podman, or a compatible CLI executable for review reruns (default auto)")
 	case "worker":
 		repo = flags.String("repo", "", "path to a local Git checkout")
 		flags.StringVar(&options.Image, "codex-image", "", "local container image for Codex execution")
@@ -118,7 +119,7 @@ func run(args []string) error {
 		}
 		defer artifacts.Close()
 	}
-	handler := http.NewCrossOriginProtection().Handler(controlplane.Handler(store.Tasks{DB: db}, web, artifacts))
+	handler := http.NewCrossOriginProtection().Handler(controlplane.Handler(store.Tasks{DB: db}, web, artifacts, options.Runtime))
 	server := &http.Server{
 		Addr: address,
 		Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

@@ -14,6 +14,7 @@ import (
 
 type containerRuntime struct {
 	executable          string
+	imageID             string
 	podman              bool
 	rootless            bool
 	disableSELinuxLabel bool
@@ -35,7 +36,7 @@ func (o Options) resolveRuntime(ctx context.Context) (containerRuntime, error) {
 		}
 		failures = append(failures, fmt.Errorf("%q: %w", candidate, err))
 	}
-	return containerRuntime{}, fmt.Errorf("no usable container runtime; task was not claimed: %w", errors.Join(failures...))
+	return containerRuntime{}, fmt.Errorf("no usable container runtime: %w", errors.Join(failures...))
 }
 
 func (o Options) probeRuntime(ctx context.Context, candidate string) (containerRuntime, error) {
@@ -66,8 +67,17 @@ func (o Options) probeRuntime(ctx context.Context, candidate string) (containerR
 		}
 		runtime.disableSELinuxLabel = o.DisableSELinuxLabel
 	}
-	if _, err := runtime.inspect(ctx, "image", "inspect", o.Image); err != nil {
+	id, err := runtime.inspect(ctx, "image", "inspect", "--format", "{{.Id}}", o.Image)
+	if err != nil {
 		return runtime, fmt.Errorf("image %q is unavailable locally; build or load it into this engine", o.Image)
+	}
+	digest := strings.TrimPrefix(strings.TrimSpace(id), "sha256:")
+	if !sha256Hex.MatchString(digest) {
+		return runtime, errors.New("image inspection did not return a valid local image ID")
+	}
+	runtime.imageID = "sha256:" + digest
+	if strings.HasPrefix(o.Image, "sha256:") && runtime.imageID != o.Image {
+		return runtime, errors.New("local image ID differs from the requested image ID")
 	}
 	return runtime, o.probeContainers(ctx, runtime)
 }
@@ -77,7 +87,7 @@ func (r containerRuntime) inspect(ctx context.Context, args ...string) (string, 
 	defer cancel()
 	cmd := exec.CommandContext(ctx, r.executable, args...)
 	cmd.WaitDelay = time.Second
-	if !r.podman || args[0] != "info" {
+	if !r.podman && args[0] == "info" {
 		return "", cmd.Run()
 	}
 	out, err := cmd.Output()
@@ -93,6 +103,17 @@ func (o Options) probeContainers(ctx context.Context, runtime containerRuntime) 
 		return errors.New("could not create a test workspace under the artifact directory")
 	}
 	defer os.RemoveAll(workspace)
+	ctx, cancel := context.WithTimeout(ctx, 20*time.Second)
+	defer cancel()
+	c := container{name: filepath.Base(workspace), workspace: workspace, runtime: runtime}
+	code, err := c.capture(ctx, io.Discard, io.Discard,
+		`test ! -e /codex-home && git --version && touch /workspace/check-ready`)
+	if err != nil || code != 0 || !probeFileExists(workspace, "check-ready") {
+		return errors.New("could not start an isolated check container; check bind mounts, image tools, and runtime flags")
+	}
+	if o.AuthHome == "" {
+		return nil // Review reruns have only the offline check container.
+	}
 	// Use a sibling of the credentials on the same filesystem without mounting
 	// the credentials or loading the operator's Codex configuration.
 	auth, err := os.MkdirTemp(o.AuthHome, ".difqo-preflight-")
@@ -104,14 +125,6 @@ func (o Options) probeContainers(ctx context.Context, runtime containerRuntime) 
 		return errors.New("could not prepare a test file in the dedicated Codex home")
 	}
 
-	ctx, cancel := context.WithTimeout(ctx, 20*time.Second)
-	defer cancel()
-	c := container{name: filepath.Base(workspace), image: o.Image, workspace: workspace, runtime: runtime}
-	code, err := c.capture(ctx, io.Discard, io.Discard,
-		`test ! -e /codex-home && git --version && touch /workspace/check-ready`)
-	if err != nil || code != 0 || !probeFileExists(workspace, "check-ready") {
-		return errors.New("could not start an isolated check container; check bind mounts, image tools, and runtime flags")
-	}
 	cmd := c.command(ctx, auth, "timeout", "-k", "2s", "10s", "sh", "-ec",
 		`test -r /codex-home/probe && test -w /codex-home
 		exec codex -c "$1" sandbox --permission-profile difqo -- sh -ec '

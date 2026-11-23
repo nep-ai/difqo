@@ -53,7 +53,8 @@ func TestRuntimeSelection(t *testing.T) {
 				}
 				return
 			}
-			if err != nil || options.runtime.executable != filepath.Join(bin, tc.want) {
+			if err != nil || options.runtime.executable != filepath.Join(bin, tc.want) ||
+				options.runtime.imageID != "sha256:"+strings.Repeat("a", 64) {
 				t.Fatalf("runtime = %+v, error = %v", options.runtime, err)
 			}
 			log, err := os.ReadFile(logPath)
@@ -135,7 +136,11 @@ case "$1" in
   info)
     if [ "${0##*/}" = podman ]; then printf 'true\n'; fi
     ;;
-  image) test "$2" = inspect ;;
+  image)
+    [ "$2" = inspect ] && [ "$3" = --format ] && [ "$4" = '{{.Id}}' ] || exit 125
+    if [ "${0##*/}" != podman ]; then printf 'sha256:'; fi
+    printf '%64s\n' '' | tr ' ' a
+    ;;
   rm) test "$2" = -f ;;
   run)
     marker=check-ready
@@ -161,8 +166,9 @@ esac
 }
 
 func TestContainerCommandKeepsRuntimeIsolation(t *testing.T) {
-	c := container{name: "fixture", image: "fixture:latest", workspace: "/fixture/workspace",
-		runtime: containerRuntime{executable: "/fixture/podman", podman: true, rootless: true, disableSELinuxLabel: true}}
+	c := container{name: "fixture", workspace: "/fixture/workspace",
+		runtime: containerRuntime{executable: "/fixture/podman", imageID: "sha256:" + strings.Repeat("a", 64),
+			podman: true, rootless: true, disableSELinuxLabel: true}}
 	ctx := context.Background()
 	check := c.command(ctx, "", "true")
 	codex := c.command(ctx, "/fixture/auth", "true")

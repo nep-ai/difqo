@@ -1,6 +1,7 @@
 package controlplane
 
 import (
+	"bytes"
 	"database/sql"
 	"encoding/json"
 	"errors"
@@ -14,15 +15,19 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"time"
 	"unicode/utf8"
+
+	"github.com/nep-ai/difqo/internal/execution"
 
 	"github.com/nep-ai/difqo/internal/store"
 )
 
 var artifactSuffix = regexp.MustCompile(`^[0-9]+$`)
 
-func Handler(tasks store.Tasks, web fs.FS, artifacts *os.Root) http.Handler {
+func Handler(tasks store.Tasks, web fs.FS, artifacts *os.Root, runtimeChoice string) http.Handler {
 	router := http.NewServeMux()
+	registerDecisions(router, tasks)
 
 	if web != nil {
 		router.HandleFunc("GET /{$}", func(w http.ResponseWriter, r *http.Request) {
@@ -52,6 +57,7 @@ func Handler(tasks store.Tasks, web fs.FS, artifacts *os.Root) http.Handler {
 		writeJSON(w, http.StatusOK, recent)
 	})
 	if artifacts != nil {
+		registerReview(router, tasks, artifacts, runtimeChoice)
 		router.HandleFunc("GET /tasks/{id}/evidence/{file}", func(w http.ResponseWriter, r *http.Request) {
 			id, ok := readID(w, r)
 			if !ok {
@@ -74,6 +80,18 @@ func Handler(tasks store.Tasks, web fs.FS, artifacts *os.Root) http.Handler {
 				http.NotFound(w, r)
 				return
 			}
+			w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+			w.Header().Set("X-Content-Type-Options", "nosniff")
+			w.Header().Set("Cache-Control", "no-store")
+			if snapshot := task.Attempt.Result.Snapshot; filename == "change.diff" && snapshot != nil {
+				patch, err := execution.ReadPatch(artifacts, task.Attempt.Result.Artifacts, snapshot.PatchSHA256)
+				if err != nil {
+					http.Error(w, "saved patch is unavailable or has changed", http.StatusConflict)
+					return
+				}
+				http.ServeContent(w, r, filename, time.Time{}, bytes.NewReader(patch))
+				return
+			}
 			f, err := artifacts.Open(path.Join(task.Attempt.Result.Artifacts, filename))
 			if err != nil {
 				http.NotFound(w, r)
@@ -81,13 +99,10 @@ func Handler(tasks store.Tasks, web fs.FS, artifacts *os.Root) http.Handler {
 			}
 			defer f.Close()
 			info, err := f.Stat()
-			if err != nil || !info.Mode().IsRegular() || info.Size() > 4<<20 {
+			if err != nil || !info.Mode().IsRegular() || info.Size() > execution.MaxEvidenceBytes {
 				http.NotFound(w, r)
 				return
 			}
-			w.Header().Set("Content-Type", "text/plain; charset=utf-8")
-			w.Header().Set("X-Content-Type-Options", "nosniff")
-			w.Header().Set("Cache-Control", "no-store")
 			http.ServeContent(w, r, filename, info.ModTime(), f)
 		})
 	}
@@ -159,10 +174,11 @@ func Handler(tasks store.Tasks, web fs.FS, artifacts *os.Root) http.Handler {
 			return
 		}
 		var request struct {
-			ExitCode  *int    `json:"exit_code"`
-			Output    *string `json:"output"`
-			Blocked   bool    `json:"blocked"`
-			Artifacts string  `json:"artifacts"`
+			ExitCode  *int            `json:"exit_code"`
+			Output    *string         `json:"output"`
+			Blocked   bool            `json:"blocked"`
+			Artifacts string          `json:"artifacts"`
+			Snapshot  *store.Snapshot `json:"snapshot"`
 		}
 		if !decode(w, r, &request) {
 			return
@@ -170,12 +186,13 @@ func Handler(tasks store.Tasks, web fs.FS, artifacts *os.Root) http.Handler {
 		if request.ExitCode == nil || *request.ExitCode < 0 || *request.ExitCode > 255 ||
 			request.Output == nil || strings.ContainsRune(*request.Output, 0) ||
 			(request.Artifacts != "" && !validArtifactRef(id, request.Artifacts)) ||
-			(request.Blocked && (*request.ExitCode == 0 || request.Artifacts != "")) {
+			(request.Blocked && (*request.ExitCode == 0 || request.Artifacts != "")) ||
+			(request.Snapshot != nil && (request.Artifacts == "" || !execution.ValidSnapshot(*request.Snapshot))) {
 			http.Error(w, "invalid result", http.StatusBadRequest)
 			return
 		}
 		err := tasks.Complete(r.Context(), id, store.Result{
-			ExitCode: *request.ExitCode, Output: *request.Output, Blocked: request.Blocked, Artifacts: request.Artifacts,
+			ExitCode: *request.ExitCode, Output: *request.Output, Blocked: request.Blocked, Artifacts: request.Artifacts, Snapshot: request.Snapshot,
 		})
 		if err != nil {
 			storeError(w, err)
@@ -228,7 +245,8 @@ func storeError(w http.ResponseWriter, err error) {
 	switch {
 	case errors.Is(err, sql.ErrNoRows):
 		http.Error(w, "record not found", http.StatusNotFound)
-	case errors.Is(err, store.ErrConflictingResult), errors.Is(err, store.ErrInactiveLease):
+	case errors.Is(err, store.ErrConflictingResult), errors.Is(err, store.ErrInactiveLease),
+		errors.Is(err, store.ErrReviewBusy), errors.Is(err, store.ErrReviewApproved), errors.Is(err, store.ErrStaleCheck):
 		http.Error(w, err.Error(), http.StatusConflict)
 	default:
 		log.Printf("store request failed (%T)", err)

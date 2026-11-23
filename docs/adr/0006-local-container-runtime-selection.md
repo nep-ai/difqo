@@ -18,6 +18,12 @@ synthetic credentials. Resolve the executable before claiming work and use
 it for every container command for that task. Report an unusable runtime
 locally and leave the task queued.
 
+Pin the worker's image ID during preflight and record it with the snapshot
+described in [ADR 0005](0005-exact-patch-review.md). The server uses its own
+operator-configured runtime selection for review reruns. It resolves the
+saved image ID and validates the offline check container. Pass the same
+runtime to both processes when both should use a specific engine.
+
 Use Podman's rootless `keep-id` mapping to preserve host access to workspace
 and credential mounts. Keep the outer container restrictions and the nested
 Codex permissions profile. Allow an explicit per-container SELinux label
