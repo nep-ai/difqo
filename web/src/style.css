@@ -118,3 +118,9 @@ dialog p { margin: 9px 0 15px; }
   .topbar .surface-title { display: none; }
   .topbar .brand { gap: 5px; }
 }
+
+.review-facts dd p { margin-top: 2px; }
+.review-facts code { white-space: pre-wrap; }
+.review-status { font-weight: 640; }
+.decision-trigger { color: var(--cobalt); background: transparent; border: 0; padding: 0; text-decoration: underline; }
+#decision-body { display: block; width: 100%; resize: vertical; margin: 6px 0 12px; padding: 8px; border: 1px solid var(--line-control); border-radius: 8px; }
