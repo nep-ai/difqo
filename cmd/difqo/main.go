@@ -20,6 +20,7 @@ import (
 	_ "github.com/jackc/pgx/v5/stdlib"
 	"github.com/nep-ai/difqo/internal/controlplane"
 	"github.com/nep-ai/difqo/internal/execution"
+	"github.com/nep-ai/difqo/internal/slackintake"
 	"github.com/nep-ai/difqo/internal/store"
 	"github.com/nep-ai/difqo/internal/worker"
 )
@@ -48,10 +49,11 @@ func run(args []string) error {
 	port := flags.Int("port", 8765, "loopback API port")
 	var repo *string
 	var githubRepositoryID int64
-	var webPath, artifactPath, projectsPath, workerProject, bindingVersion string
+	var webPath, artifactPath, projectsPath, workerProject, bindingVersion, slackFixture string
 	var options execution.Options
 	switch args[0] {
 	case "server":
+		flags.StringVar(&slackFixture, "slack-relay-fixture", "", "enable local Slack lifecycle tests with an HTTP loopback relay fixture")
 		flags.StringVar(&projectsPath, "projects", "", "path to the local project catalog JSON file")
 		flags.StringVar(&webPath, "web", "", "path to the built local web UI")
 		flags.StringVar(&artifactPath, "artifacts", "", "absolute path to the worker artifact directory")
@@ -155,7 +157,15 @@ func run(args []string) error {
 	if err != nil {
 		return err
 	}
-	handler := http.NewCrossOriginProtection().Handler(controlplane.Handler(store.Tasks{DB: db}, web, artifacts, options.Runtime, projects))
+	tasks := store.Tasks{DB: db}
+	var slack *slackintake.Connections
+	if slackFixture != "" {
+		slack, err = slackintake.NewFixtureConnections(tasks, slackFixture)
+		if err != nil {
+			return err
+		}
+	}
+	handler := http.NewCrossOriginProtection().Handler(controlplane.Handler(tasks, web, artifacts, options.Runtime, projects, slack))
 	server := &http.Server{
 		Addr: address,
 		Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
