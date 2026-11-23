@@ -539,9 +539,19 @@ with TemporaryDirectory(prefix='difqo-smoke-') as scratch:
                  'channel_id': 'D11', 'type': 'message', 'channel_type': 'im', 'bot': False,
                  'text': 'goal Review the synthetic Slack snapshot'}
 
-        def slack_import(incoming, flags=slack_flags):
-            return subprocess.run([binary, 'slack-import', *flags], input=json.dumps(incoming), text=True,
+        def slack_import_raw(incoming, flags=slack_flags):
+            return subprocess.run([binary, 'slack-import', *flags], input=incoming, text=True,
                                   capture_output=True, timeout=15)
+
+        def slack_import(incoming, flags=slack_flags):
+            return slack_import_raw(json.dumps(incoming), flags)
+
+        event_json = json.dumps(event)
+        for malformed in ('{', event_json + '\n' + event_json, event_json + '\nnot-json',
+                          event_json.ljust(64 * 1024 + 1)):
+            rejected = slack_import_raw(malformed)
+            assert rejected.returncode != 0, rejected.stdout
+            assert 'expected one bounded normalized Slack event' in rejected.stderr, rejected.stderr
 
         for changes in ({'app_id': 'A99'}, {'workspace_id': 'T99'}, {'operator_id': 'U99'},
                         {'channel_id': 'D99'}, {'channel_type': 'mpim'}, {'channel_type': 'channel'},

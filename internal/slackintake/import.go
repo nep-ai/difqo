@@ -41,12 +41,9 @@ func Import(ctx context.Context, tasks store.Tasks, binding store.SlackBinding, 
 	if err := validateBinding(binding); err != nil {
 		return false, err
 	}
-	limited := &io.LimitedReader{R: input, N: maxEventSize + 1}
-	decoder := json.NewDecoder(limited)
-	decoder.DisallowUnknownFields()
-	var incoming event
-	if err := decoder.Decode(&incoming); err != nil || decoder.Decode(new(any)) != io.EOF || limited.N == 0 {
-		return false, errors.New("expected one bounded normalized Slack event")
+	incoming, err := readEvent(ctx, input)
+	if err != nil {
+		return false, err
 	}
 	if incoming.SlackBinding != binding || incoming.Type != "message" || incoming.ChannelType != "im" ||
 		incoming.Bot == nil || *incoming.Bot || incoming.Subtype != "" {
@@ -61,4 +58,37 @@ func Import(ctx context.Context, tasks store.Tasks, binding store.SlackBinding, 
 		return false, errors.New("use goal followed by a task of up to 4096 characters")
 	}
 	return tasks.ImportSlack(ctx, binding, incoming.EventID, goal)
+}
+
+func readEvent(ctx context.Context, input io.Reader) (event, error) {
+	if err := ctx.Err(); err != nil {
+		return event{}, err
+	}
+	type result struct {
+		event event
+		err   error
+	}
+	done := make(chan result, 1)
+	// Keep the blocking read separate from task creation. The CLI owns stdin
+	// for this one import, so exiting also ends any read still waiting for EOF.
+	go func() {
+		limited := &io.LimitedReader{R: input, N: maxEventSize + 1}
+		decoder := json.NewDecoder(limited)
+		decoder.DisallowUnknownFields()
+		var incoming event
+		if err := decoder.Decode(&incoming); err != nil || decoder.Decode(new(any)) != io.EOF || limited.N == 0 {
+			done <- result{err: errors.New("expected one bounded normalized Slack event")}
+			return
+		}
+		done <- result{event: incoming}
+	}()
+	select {
+	case <-ctx.Done():
+		return event{}, ctx.Err()
+	case decoded := <-done:
+		if err := ctx.Err(); err != nil {
+			return event{}, err
+		}
+		return decoded.event, decoded.err
+	}
 }
