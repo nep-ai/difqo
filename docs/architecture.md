@@ -9,11 +9,17 @@ flowchart LR
     GitHubIntake -->|"Read installation scope and conversation comments"| GitHub["GitHub API"]
     GitHubIntake -->|"Save linked identity, source, cursor, and task"| Postgres
     Browser -->|"Save decisions, submit goals, and review patches over loopback HTTP"| Server["difqo server"]
-    Operator -->|"Run the worker when ready"| Worker
+    Browser -->|"Select a project and start an approved specialist revision"| Server
+    Operator -->|"Register checkout bindings"| Server
+    Operator -->|"Run a project-bound worker"| SpecialistWorker["Specialist worker"]
+    SpecialistWorker -->|"Request a claim for its registered binding and report output"| Server
+    SpecialistWorker -->|"Read the selected committed tree using Git"| ProjectSnapshot["Selected project snapshot"]
+    Server -->|"Recheck authorization and persist run selection and attempts"| Postgres
+    Operator -->|"Run the ordinary or Codex worker"| Worker
     Worker["difqo worker"] -->|"Claim a leased attempt and report its result over loopback HTTP"| Server
     Server -->|"Persist decisions, attempts, review checks, and approvals"| Postgres[("PostgreSQL on host")]
     Worker -->|"Read HEAD or make a shallow clone"| Repo["Operator-selected Git checkout"]
-    Worker -->|"Validate engine, local image, and sandbox before claim"| Runtime["Docker, Podman, or compatible container CLI"]
+    Worker -->|"In Codex mode, validate runtime, image, and sandbox before claim"| Runtime["Docker, Podman, or compatible container CLI"]
     Runtime -->|"Run one App Server turn over stdio"| Codex["Disposable execution workspace"]
     Worker -->|"Capture base, diff, and check log"| Artifacts["Host artifact directory"]
     Server -->|"Read and verify attempt-bound evidence"| Artifacts
