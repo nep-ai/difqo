@@ -31,12 +31,15 @@ func main() {
 }
 
 func run(args []string) error {
-	const usage = "usage: difqo server | difqo worker -repo PATH | difqo github-intake -help"
+	const usage = "usage: difqo server | difqo worker -repo PATH | difqo github-intake -help | difqo slack-import -help"
 	if len(args) == 0 {
 		return errors.New(usage)
 	}
 	if args[0] == "github-intake" {
 		return runGitHubIntake(args[1:])
+	}
+	if args[0] == "slack-import" {
+		return runSlackImport(args[1:])
 	}
 	flags := flag.NewFlagSet(args[0], flag.ContinueOnError)
 	port := flags.Int("port", 8765, "loopback API port")

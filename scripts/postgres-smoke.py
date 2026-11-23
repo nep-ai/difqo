@@ -533,6 +533,50 @@ with TemporaryDirectory(prefix='difqo-smoke-') as scratch:
             print('Review smoke passed: saved decision, isolated original-base rerun, stale and failed checks, patch integrity, and approval persistence')
             print(f'{runtime} smoke passed: pre-claim rejection, real Codex sign-in block, '
                   'synthetic turn, container cleanup, and evidence retrieval')
+
+        slack_flags = ['-app-id', 'A11', '-workspace-id', 'T11', '-operator-id', 'U11', '-dm-id', 'D11']
+        event = {'event_id': 'EV11', 'app_id': 'A11', 'workspace_id': 'T11', 'operator_id': 'U11',
+                 'channel_id': 'D11', 'type': 'message', 'channel_type': 'im', 'bot': False,
+                 'text': 'goal Review the synthetic Slack snapshot'}
+
+        def slack_import(incoming, flags=slack_flags):
+            return subprocess.run([binary, 'slack-import', *flags], input=json.dumps(incoming), text=True,
+                                  capture_output=True, timeout=15)
+
+        for changes in ({'app_id': 'A99'}, {'workspace_id': 'T99'}, {'operator_id': 'U99'},
+                        {'channel_id': 'D99'}, {'channel_type': 'mpim'}, {'channel_type': 'channel'},
+                        {'bot': True}, {'subtype': 'message_changed'}, {'type': 'approval'},
+                        {'text': 'approve 17'}, {'text': 'goal ' + 'x' * 4097}):
+            rejected = slack_import(event | changes)
+            assert rejected.returncode != 0, changes
+        assert slack_import({key: value for key, value in event.items() if key != 'bot'}).returncode != 0
+        assert api('/project-decision', 'POST', {'body': 'Use the local Slack intake fixture decision.'})[0] == 201
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            imported = list(pool.map(slack_import, [event, event]))
+        assert all(result.returncode == 0 for result in imported), [result.stderr for result in imported]
+        assert sorted(result.stdout.strip() for result in imported) == [
+            'Imported one Slack goal', 'Slack event already imported',
+        ]
+        server.terminate()
+        server.wait(timeout=5)
+        server = start()
+        replay = slack_import(event)
+        assert replay.returncode == 0 and replay.stdout.strip() == 'Slack event already imported'
+        assert slack_import(event | {'text': 'goal Different goal with same event ID'}).returncode != 0
+        other_workspace = slack_flags.copy()
+        other_workspace[3] = 'T99'
+        assert slack_import(event | {'workspace_id': 'T99', 'event_id': 'EV99'}, other_workspace).returncode != 0
+
+        status, recent = api('/tasks')
+        assert status == 200
+        slack_tasks = [task for task in recent if 'Slack snapshot' in task['goal']]
+        assert len(slack_tasks) == 1
+        slack_task, = slack_tasks
+        assert slack_task['goal'] == 'Review the synthetic Slack snapshot' and slack_task['status'] == 'queued'
+        assert slack_task['decision']['body'] == 'Use the local Slack intake fixture decision.'
+        status, claimed = api('/tasks/claim', 'POST', {})
+        assert status == 200 and claimed['id'] == slack_task['id']
+        print('Slack intake smoke passed: scope, task visibility, concurrent deduplication, and replay after restart')
     finally:
         server.terminate()
         server.wait(timeout=5)

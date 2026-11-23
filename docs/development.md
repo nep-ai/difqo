@@ -339,3 +339,25 @@ The test role needs permission to create a temporary schema in the test database
 DIFQO_GITHUB_TEST_DATABASE_URL="$DIFQO_DATABASE_URL" \
   go test -count=1 ./internal/githubintake
 ```
+
+## Offline Slack intake verification
+
+Use a disposable migrated database. Run `slack-import` with the configured
+app, workspace, operator, and DM IDs, then pass one normalized event on stdin.
+The synthetic IDs below set the binding on first successful import.
+
+```sh
+./bin/difqo slack-import -app-id A11 -workspace-id T11 -operator-id U11 -dm-id D11 <<'JSON'
+{"app_id":"A11","workspace_id":"T11","operator_id":"U11","channel_id":"D11","event_id":"EV11","type":"message","channel_type":"im","bot":false,"text":"goal Review the synthetic Slack snapshot"}
+JSON
+```
+
+The goal appears in Chief of Staff as an ordinary local task. Repeat the
+command to verify that the event is already imported. Change the incoming
+workspace, sender, or conversation to verify rejection. The PostgreSQL smoke
+test also covers simultaneous delivery and replay after restart.
+
+This command accepts events from a trusted local source. Official Connect
+Slack and private Socket Mode need authenticated delivery adapters. Slack
+transport, DM control actions, and replies are tracked in
+[#11](https://github.com/nep-ai/difqo/issues/11).
