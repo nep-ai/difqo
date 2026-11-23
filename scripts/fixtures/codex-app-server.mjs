@@ -25,8 +25,8 @@ for await (const line of responses) {
       break;
     case 'turn/start': {
       // Earlier smoke scenarios can save other revisions in the same database.
-      const text = request.params.input[0].text.replace(/^Saved project decision \(revision [1-9]\d*\):/, 'Saved project decision:');
-      if (text !== 'Saved project decision:\nUse the line after in greeting.txt.\n\nTask goal:\nReplace the fixture greeting') {
+      const decision = /^Saved project decision \(revision [1-9]\d*\):\n/.exec(request.params.input[0].text);
+      if (!decision || request.params.input[0].text.slice(decision[0].length) !== 'Use the line after in greeting.txt.\n\nTask goal:\nReplace the fixture greeting') {
         throw new Error('Unexpected task goal or decision revision');
       }
       if (readFileSync('greeting.txt', 'utf8') !== 'before\n') {
