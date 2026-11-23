@@ -42,10 +42,16 @@ type Tasks struct {
 }
 
 func (s Tasks) Create(ctx context.Context, goal string) (Task, error) {
+	return createTask(ctx, s.DB, goal)
+}
+
+func createTask(ctx context.Context, db interface {
+	QueryRowContext(context.Context, string, ...any) *sql.Row
+}, goal string) (Task, error) {
 	task := Task{Goal: goal, Status: "queued"}
 	var decisionID *int64
 	var decisionBody *string
-	err := s.DB.QueryRowContext(ctx, `
+	err := db.QueryRowContext(ctx, `
 		WITH saved AS (
 			INSERT INTO tasks (goal, decision_id)
 			VALUES ($1, (SELECT id FROM project_decisions ORDER BY id DESC LIMIT 1))
@@ -129,16 +135,16 @@ func scanTask(row interface{ Scan(...any) error }) (Task, error) {
 	return task, err
 }
 
-func (s Tasks) Claim(ctx context.Context) (Task, error) {
+func (s Tasks) Claim(ctx context.Context, githubRepositoryID int64) (Task, error) {
 	for {
-		task, retry, err := s.claim(ctx)
+		task, retry, err := s.claim(ctx, githubRepositoryID)
 		if !retry {
 			return task, err
 		}
 	}
 }
 
-func (s Tasks) claim(ctx context.Context) (Task, bool, error) {
+func (s Tasks) claim(ctx context.Context, githubRepositoryID int64) (Task, bool, error) {
 	tx, err := s.DB.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelReadCommitted})
 	if err != nil {
 		return Task{}, false, err
@@ -151,15 +157,16 @@ func (s Tasks) claim(ctx context.Context) (Task, bool, error) {
 	err = tx.QueryRowContext(ctx, `
 		SELECT t.id, t.goal, d.id, d.body FROM tasks t
 		LEFT JOIN project_decisions d ON d.id = t.decision_id
+		LEFT JOIN github_task_sources g ON g.task_id = t.id
 		LEFT JOIN LATERAL (
 			SELECT attempt_number, lease_expires_at, completed_at
 			FROM attempts WHERE task_id = t.id ORDER BY attempt_number DESC LIMIT 1
 		) a ON true
-		WHERE a.attempt_number IS NULL OR (
+		WHERE COALESCE(g.repository_id, 0) = $2 AND (a.attempt_number IS NULL OR (
 			a.completed_at IS NULL AND a.lease_expires_at <= statement_timestamp()
 			AND a.attempt_number < $1
-		)
-		ORDER BY t.id LIMIT 1 FOR UPDATE OF t SKIP LOCKED`, maxAttempts).Scan(&task.ID, &task.Goal, &decisionID, &decisionBody)
+		))
+		ORDER BY t.id LIMIT 1 FOR UPDATE OF t SKIP LOCKED`, maxAttempts, githubRepositoryID).Scan(&task.ID, &task.Goal, &decisionID, &decisionBody)
 	if err != nil {
 		return Task{}, false, err
 	}

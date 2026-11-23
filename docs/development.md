@@ -11,10 +11,9 @@ cp .env.example .env
 set -a
 . ./.env
 set +a
-psql "$DIFQO_DATABASE_URL" -v ON_ERROR_STOP=1 \
-  -f migrations/0001_tasks.sql -f migrations/0002_attempt_leases.sql \
-  -f migrations/0003_execution_evidence.sql -f migrations/0004_patch_review.sql \
-  -f migrations/0005_specialists.sql
+for migration in migrations/*.sql; do
+  psql "$DIFQO_DATABASE_URL" -v ON_ERROR_STOP=1 -f "$migration" || break
+done
 go build -o bin/difqo ./cmd/difqo
 ./bin/difqo server
 ```
@@ -155,10 +154,9 @@ locally, build the binary as above, set `DIFQO_DATABASE_URL` to a fresh disposab
 database, and run:
 
 ```sh
-psql "$DIFQO_DATABASE_URL" -v ON_ERROR_STOP=1 \
-  -f migrations/0001_tasks.sql -f migrations/0002_attempt_leases.sql \
-  -f migrations/0003_execution_evidence.sql -f migrations/0004_patch_review.sql \
-  -f migrations/0005_specialists.sql
+for migration in migrations/*.sql; do
+  psql "$DIFQO_DATABASE_URL" -v ON_ERROR_STOP=1 -f "$migration" || break
+done
 python3 scripts/postgres-smoke.py bin/difqo
 ```
 
@@ -259,3 +257,39 @@ to see its current approved configuration, propose an update, or review a
 disable request. A single profile covers snapshot review for all approved
 projects. Specialist execution and run history are tracked in
 [#20](https://github.com/nep-ai/difqo/issues/20).
+
+## Local GitHub comment intake
+
+The one-shot poller accepts a short-lived installation token in
+`DIFQO_GITHUB_TOKEN`. Supply a token scoped to the enrolled repository with
+read permissions for issues and pull requests. Configure the repository's
+numeric ID and the numeric GitHub user ID of the local owner. Only that
+account's issue and pull request conversation comments starting with
+`@difqo` followed by a goal enter the queue. Use `-handle` for a private app
+with a different handle. Set an enrollment start time and reuse it on
+subsequent calls. Keep credentials outside Git.
+
+```sh
+./bin/difqo github-intake -repository OWNER/REPO -repository-id REPO_ID \
+  -owner-id GITHUB_USER_ID -since 2026-11-23T00:00:00Z
+```
+
+Use `-github-repository-id REPO_ID` on a Codex worker and point `-repo` at the
+enrolled repository's trusted local checkout. Ordinary workers claim local
+goals. Review and approval remain in the local app. The poller makes read-only
+GitHub requests and reports expired or revoked access as a reconnect error.
+
+Poll frequently enough to stay within one page of comments. If GitHub returns
+more than 100 comments for the cursor window, the poll fails and preserves its
+cursor. This slice accepts a pre-issued token. Official app installation,
+account linking, hosted token issuance, local private-app token minting, and
+approved GitHub replies are future work. See the
+[GitHub intake ADR](adr/0007-github-intake.md).
+
+Run the synthetic HTTP and PostgreSQL checks without GitHub credentials.
+The test role needs permission to create a temporary schema in the test database.
+
+```sh
+DIFQO_GITHUB_TEST_DATABASE_URL="$DIFQO_DATABASE_URL" \
+  go test -count=1 ./internal/githubintake
+```

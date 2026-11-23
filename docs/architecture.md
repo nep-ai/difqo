@@ -5,6 +5,9 @@
 ```mermaid
 flowchart LR
     Operator["Local operator"] --> Browser["Chief of Staff web app"]
+    Operator -->|"Poll an enrolled repository"| GitHubIntake["Local GitHub intake command"]
+    GitHubIntake -->|"Read installation scope and conversation comments"| GitHub["GitHub API"]
+    GitHubIntake -->|"Save linked identity, source, cursor, and task"| Postgres
     Browser -->|"Save decisions, submit goals, and review patches over loopback HTTP"| Server["difqo server"]
     Operator -->|"Run the worker when ready"| Worker
     Worker["difqo worker"] -->|"Claim a leased attempt and report its result over loopback HTTP"| Server
@@ -37,6 +40,12 @@ The server uses an unauthenticated loopback API for the groundwork. Run it
 in a trusted local development environment. PostgreSQL stores the revision check
 output directly. The development workflow and API examples are in the [local
 setup guide](development.md).
+
+The GitHub intake command uses a pre-issued installation token scoped to a
+repository and accepts task requests from the locally configured GitHub user.
+Imported tasks use the same decision and patch-review flow as local goals.
+Workers opt into that repository's queue by numeric ID. See
+[ADR 0007](adr/0007-github-intake.md).
 
 ## Chief of Staff web app
 
@@ -75,7 +84,10 @@ one eligible project per run and enforce its isolation boundary. See
 flowchart LR
     Browser["React + Vite web app"] --> Intake
     Slack["Slack Socket Mode"] <-->|"Private owner DM"| Intake
-    GitHub["GitHub App"] <-->|"Poll comments and reply"| Intake
+    GitHub["GitHub API"] <-->|"Read comments and deliver approved replies"| GitHubPoller["Local outbound GitHub poller"]
+    Official["Hosted Difqo credential service"] -->|"Scoped installation tokens"| GitHubPoller
+    Private["Local private app credentials"] -->|"Mint installation tokens directly with GitHub"| GitHubPoller
+    GitHubPoller --> Intake
 
     subgraph Server["Go server process"]
         Intake["Shared task intake"] --> CoS["Chief of Staff"]
