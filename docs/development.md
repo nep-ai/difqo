@@ -261,11 +261,21 @@ projects.
 
 In **Specialists**, open **Browse specialist templates** and choose
 **Committed change summary** or **Tracked file inventory**. Both use the
-same local Git snapshot report and prefill the name, purpose, and expected
-output. Edit those fields, select the projects to authorize, and review and
-approve the proposal. The resulting specialist uses the usual update and
+same local Git snapshot profile and prefill the name, purpose, expected output,
+and report selection. Edit those fields, select the projects to authorize,
+and review and approve the proposal. The resulting specialist uses the usual update and
 approval flow. Running it requires a project-bound worker and a committed
 checkout.
+
+### Customize a snapshot specialist
+
+Start with **Propose a specialist**, use a template, or open **Propose
+update** on an approved specialist. Choose **Commit changes**, **Tracked
+files**, or both in **Snapshot report**. The worker uses the selection
+saved in the approved revision. Older revisions default to both sections.
+Purpose and expected output are context displayed in the report. Model
+settings, executable prompts, tools, skills, and MCP integrations are
+outside the scope of the current local snapshot profile.
 
 ### Start and inspect a specialist run
 
@@ -282,7 +292,7 @@ version:
 ./bin/difqo worker -project reports -binding-version 1 -repo /path/to/reports
 ```
 
-The snapshot-review profile reports committed file changes and tracked files,
+The snapshot-review profile reports the selected commit changes and tracked files,
 with the requested goal and saved decision as context. It uses local Git reads.
 No provider credentials or container configuration are needed. The worker
 claims one run for that binding per invocation. Ordinary workers continue to

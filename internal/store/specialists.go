@@ -20,11 +20,24 @@ type SpecialistProject struct {
 
 type SpecialistConfig struct {
 	Name     string              `json:"name"`
+	Report   SnapshotReport      `json:"report,omitempty"`
 	Purpose  string              `json:"purpose"`
 	Output   string              `json:"output"`
 	Profile  string              `json:"profile"`
 	Access   string              `json:"access"`
 	Projects []SpecialistProject `json:"projects"`
+}
+
+type SnapshotReport string
+
+const (
+	ReportBoth      SnapshotReport = "both"
+	ReportChanges   SnapshotReport = "changes"
+	ReportInventory SnapshotReport = "inventory"
+)
+
+func (r SnapshotReport) Valid() bool {
+	return r == "" || r == ReportBoth || r == ReportChanges || r == ReportInventory
 }
 
 const specialistProfile = "snapshot-review-v1"
