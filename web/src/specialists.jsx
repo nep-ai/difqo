@@ -3,23 +3,31 @@ import React, { useEffect, useRef, useState } from 'react'
 const actionLabel = { create: 'Approve specialist', update: 'Approve update', disable: 'Disable specialist' }
 const outcomeLabel = { approve: 'Approved', decline: 'Declined', revise: 'Changes requested', stale: 'Out of date' }
 
+const reportOptions = {
+  both: 'Commit changes and tracked files',
+  changes: 'Commit changes',
+  inventory: 'Tracked files',
+}
+
 const specialistTemplates = [
   {
     name: 'Committed change summary',
     purpose: 'Review the file changes in the selected project’s latest commit.',
-    output: 'The commit ID and changed paths with Git change statuses, followed by the tracked file list.',
+    output: 'The commit ID and changed paths with Git change statuses.',
+    report: 'changes',
   },
   {
     name: 'Tracked file inventory',
     purpose: 'Inventory the paths tracked in the selected project’s committed snapshot.',
-    output: 'The commit ID and tracked file paths, with the latest commit’s changed paths for context.',
+    output: 'The commit ID and tracked file paths.',
+    report: 'inventory',
   },
 ]
 
 function draftFor(action, specialistID = 0, revision = 0, config = {}) {
   return {
     id: crypto.randomUUID(), action, specialist_id: specialistID, base_revision: revision,
-    name: config.name || '', purpose: config.purpose || '', output: config.output || '',
+    name: config.name || '', purpose: config.purpose || '', output: config.output || '', report: config.report || 'both',
     projects: config.projects?.filter(project => !config.catalog || config.catalog.some(item => item.id === project.id && item.binding === project.binding)).map(project => project.id) || [],
   }
 }
@@ -28,6 +36,7 @@ function Configuration({ config, catalog }) {
   return <dl className="specialist-config">
     <dt>Purpose</dt><dd>{config.purpose}</dd>
     <dt>Expected output</dt><dd>{config.output}</dd>
+    <dt>Snapshot report</dt><dd>{reportOptions[config.report || 'both']}</dd>
     <dt>Approved operations</dt><dd>{config.access}</dd>
     <dt>Project scope</dt><dd><ul>{config.projects.map(project => {
       const available = catalog.some(item => item.id === project.id && item.binding === project.binding)
@@ -84,6 +93,7 @@ function StartRun({ specialist, catalog, start }) {
     <summary>Run this specialist</summary>
     <form onSubmit={submit}>
       <p>{specialist.configuration.name} · Revision {specialist.revision}</p>
+      <p>Snapshot report · {reportOptions[specialist.configuration.report || 'both']}</p>
       <p>{specialist.configuration.access}</p>
       <label className="specialist-field">Run project
         <select value={selected} disabled={busy} onChange={event => { select(event.target.value); setID(crypto.randomUUID()) }}>
@@ -248,7 +258,7 @@ export function Specialists({ request, mark, close, onQueued }) {
             }} />}
           </article>}
           {draft && <form className="specialist-record" onSubmit={event => { event.preventDefault(); propose(draft) }}>
-            <h3>{draft.action === 'create' ? 'What should this specialist do?' : 'What should change?'}</h3>
+            <h3>{draft.action === 'create' ? 'Configure a specialist' : 'What should change?'}</h3>
             <label className="specialist-field">Specialist name
               <input ref={name} disabled={busy} required maxLength={100} value={draft.name} onChange={event => change('name', event.target.value)} />
             </label>
@@ -257,6 +267,12 @@ export function Specialists({ request, mark, close, onQueued }) {
             </label>
             <label className="specialist-field">Expected output
               <textarea disabled={busy} required maxLength={1024} value={draft.output} onChange={event => change('output', event.target.value)} />
+            </label>
+            <p>Purpose and expected output appear as context in the report.</p>
+            <label className="specialist-field">Snapshot report
+              <select disabled={busy} value={draft.report} onChange={event => change('report', event.target.value)}>
+                {Object.entries(reportOptions).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+              </select>
             </label>
             <fieldset disabled={busy}>
               <legend>Projects to authorize</legend>

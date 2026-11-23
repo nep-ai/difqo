@@ -12,6 +12,7 @@ var ErrRunUnauthorized = errors.New("the selected specialist revision is unavail
 var ErrRunConflict = errors.New("this run request already belongs to a different goal or selection")
 
 type SpecialistRun struct {
+	Report       SnapshotReport    `json:"report,omitempty"`
 	SpecialistID int64             `json:"specialist_id"`
 	Revision     int               `json:"revision"`
 	Project      SpecialistProject `json:"project"`
@@ -26,7 +27,7 @@ const runMetadata = `CASE WHEN sr.task_id IS NOT NULL THEN jsonb_build_object(
 	'specialist_id', sr.specialist_id, 'revision', sr.revision, 'project', sr.project,
 	'name', approved.configuration->>'name', 'purpose', approved.configuration->>'purpose',
 	'output', approved.configuration->>'output', 'access', approved.configuration->>'access',
-	'profile', approved.configuration->>'profile'
+	'profile', approved.configuration->>'profile', 'report', approved.configuration->>'report'
 ) END`
 
 const runJoins = `

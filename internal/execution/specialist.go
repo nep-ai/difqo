@@ -16,6 +16,9 @@ import (
 // ReviewProjectSnapshot uses fixed Git reads against a committed tree. The
 // goal, specialist instructions, and saved decision are report context.
 func ReviewProjectSnapshot(ctx context.Context, repo string, task store.Task) store.Result {
+	if !task.Run.Report.Valid() {
+		return store.Result{ExitCode: 125, Output: "The selected snapshot report is unsupported."}
+	}
 	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
 	defer cancel()
 	command := func(args ...string) *exec.Cmd {
@@ -41,14 +44,16 @@ func ReviewProjectSnapshot(ctx context.Context, repo string, task store.Task) st
 	}
 	var truncated bool
 	limit := &cappedOutput{writer: &output, remaining: 24 << 10, truncated: &truncated}
-	output.WriteString("\nChanges in the selected commit:\n")
-	diff := command("diff-tree", "--root", "--first-parent", "-m", "--no-commit-id", "--no-ext-diff", "--no-textconv",
-		"--name-status", "-r", base, "--")
-	diff.Stdout = limit
-	if err := diff.Run(); err != nil {
-		return store.Result{ExitCode: 125, Output: "Could not inspect changes in the selected project snapshot."}
+	if task.Run.Report != store.ReportInventory {
+		output.WriteString("\nChanges in the selected commit:\n")
+		diff := command("diff-tree", "--root", "--first-parent", "-m", "--no-commit-id", "--no-ext-diff", "--no-textconv",
+			"--name-status", "-r", base, "--")
+		diff.Stdout = limit
+		if err := diff.Run(); err != nil {
+			return store.Result{ExitCode: 125, Output: "Could not inspect changes in the selected project snapshot."}
+		}
 	}
-	if !truncated {
+	if !truncated && task.Run.Report != store.ReportChanges {
 		output.WriteString("\nTracked files in this snapshot:\n")
 		tree := command("ls-tree", "-r", "--name-only", base, "--")
 		tree.Stdout = limit

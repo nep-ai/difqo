@@ -139,6 +139,7 @@ with TemporaryDirectory(prefix='difqo-smoke-') as scratch:
         assert decide(declined, 'decline')[0] == 200
         assert specialist_state()['specialists'] == []
         draft, proposal = propose()
+        assert api('/specialist-proposals', 'POST', draft | {'id': str(uuid4()), 'report': 'unsupported'})[0] == 400
         assert api('/specialist-proposals', 'POST', draft) == (201, proposal)
         assert api('/specialist-proposals', 'POST', draft | {'name': 'Changed content'})[0] == 409
         assert api('/specialist-proposals', 'POST', draft | {'id': str(uuid4()), 'projects': ['unknown']})[0] == 400
@@ -195,6 +196,7 @@ with TemporaryDirectory(prefix='difqo-smoke-') as scratch:
             assert [attempt['status'] for attempt in history['attempts']] == expected_statuses, history
             output = history['attempts'][-1]['result']['output']
             assert f'{project["id"]}-only.txt' in output and f'{project["id"]}-decision-v1' in output
+            assert 'Changes in the selected commit:' in output and 'Tracked files in this snapshot:' in output
             for other in ('reports', 'billing', 'inventory'):
                 if other != project['id']:
                     assert f'{other}-only.txt' not in output and f'{other}-decision-v1' not in output
@@ -208,8 +210,8 @@ with TemporaryDirectory(prefix='difqo-smoke-') as scratch:
         assert not eligible(specialist, 'inventory')
         assert decide(revise, 'revise')[0] == 200
         assert decide(revise)[0] == 409
-        _, first = propose('update', specialist, 1, scope=['reports', 'inventory'], purpose='New specialist purpose')
-        _, second = propose('update', specialist, 1, scope=['reports', 'inventory'], purpose='New specialist purpose')
+        _, first = propose('update', specialist, 1, scope=['reports', 'inventory'], purpose='New specialist purpose', report='inventory')
+        _, second = propose('update', specialist, 1, scope=['reports', 'inventory'], purpose='New specialist purpose', report='inventory')
         with ThreadPoolExecutor(max_workers=2) as pool:
             outcomes = list(pool.map(decide, [first, second]))
         assert sorted(status for status, _ in outcomes) == [200, 409]
@@ -225,6 +227,16 @@ with TemporaryDirectory(prefix='difqo-smoke-') as scratch:
         assert retained['status'] == 'completed'
         assert 'Specialist purpose: Review test coverage' in retained['result']['output']
         assert 'New specialist purpose' not in retained['result']['output']
+        assert 'Changes in the selected commit:' in retained['result']['output']
+        status, inventory_only = api('/specialist-runs', 'POST', run_input(specialist, 2, reports))
+        assert status == 201 and inventory_only['specialist_run']['report'] == 'inventory'
+        run_project_worker('reports')
+        inventory_result, = run_history(inventory_only)['attempts']
+        output = inventory_result['result']['output']
+        assert inventory_result['status'] == 'completed'
+        assert 'Tracked files in this snapshot:' in output and 'reports-only.txt' in output
+        assert 'Changes in the selected commit:' not in output
+
         assert api('/specialist-runs', 'POST', run_input(specialist, 1, reports))[0] == 403
         status, rebound_run = api('/specialist-runs', 'POST', run_input(specialist, 2, reports))
         assert status == 201

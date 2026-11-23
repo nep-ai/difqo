@@ -43,14 +43,15 @@ func registerSpecialists(router *http.ServeMux, specialists store.Specialists) {
 	})
 	router.HandleFunc("POST /specialist-proposals", func(w http.ResponseWriter, r *http.Request) {
 		var input struct {
-			ID           string   `json:"id"`
-			SpecialistID int64    `json:"specialist_id"`
-			BaseRevision int      `json:"base_revision"`
-			Action       string   `json:"action"`
-			Name         string   `json:"name"`
-			Purpose      string   `json:"purpose"`
-			Output       string   `json:"output"`
-			Projects     []string `json:"projects"`
+			ID           string               `json:"id"`
+			SpecialistID int64                `json:"specialist_id"`
+			BaseRevision int                  `json:"base_revision"`
+			Action       string               `json:"action"`
+			Name         string               `json:"name"`
+			Purpose      string               `json:"purpose"`
+			Output       string               `json:"output"`
+			Report       store.SnapshotReport `json:"report"`
+			Projects     []string             `json:"projects"`
 		}
 		if !decode(w, r, &input) {
 			return
@@ -76,7 +77,11 @@ func registerSpecialists(router *http.ServeMux, specialists store.Specialists) {
 		}
 
 		config := store.SpecialistConfig{
-			Name: strings.TrimSpace(input.Name), Purpose: strings.TrimSpace(input.Purpose), Output: strings.TrimSpace(input.Output),
+			Name: strings.TrimSpace(input.Name), Purpose: strings.TrimSpace(input.Purpose), Output: strings.TrimSpace(input.Output), Report: input.Report,
+		}
+		if !input.Report.Valid() {
+			http.Error(w, "choose a supported snapshot report", http.StatusBadRequest)
+			return
 		}
 		if input.Action != "disable" && (!specialistText(config.Name, 100) || !specialistText(config.Purpose, 4096) ||
 			!specialistText(config.Output, 1024) || len(input.Projects) > 32) {
