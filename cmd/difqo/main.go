@@ -50,10 +50,11 @@ func run(args []string) error {
 	port := flags.Int("port", 8765, "loopback API port")
 	var repo *string
 	var githubRepositoryID int64
-	var webPath, artifactPath, projectsPath, workerProject, bindingVersion, slackFixture string
+	var webPath, artifactPath, projectsPath, workerProject, bindingVersion, slackFixture, slackRelay string
 	var options execution.Options
 	switch args[0] {
 	case "server":
+		flags.StringVar(&slackRelay, "slack-relay", "", "HTTPS origin of the official Slack relay")
 		flags.StringVar(&slackFixture, "slack-relay-fixture", "", "enable local Slack lifecycle and delivery with an HTTP loopback relay fixture")
 		flags.StringVar(&projectsPath, "projects", "", "path to the local project catalog JSON file")
 		flags.StringVar(&webPath, "web", "", "path to the built local web UI")
@@ -81,6 +82,9 @@ func run(args []string) error {
 	}
 	if *port < 1 || *port > 65535 || flags.NArg() > 0 {
 		return errors.New("invalid port or extra arguments")
+	}
+	if slackFixture != "" && slackRelay != "" {
+		return errors.New("choose either -slack-relay or -slack-relay-fixture")
 	}
 	address := "127.0.0.1:" + strconv.Itoa(*port)
 	if repo != nil {
@@ -160,11 +164,14 @@ func run(args []string) error {
 	}
 	tasks := store.Tasks{DB: db}
 	var slack *slackintake.Connections
-	if slackFixture != "" {
+	switch {
+	case slackRelay != "":
+		slack, err = slackintake.NewHTTPSConnections(tasks, slackRelay)
+	case slackFixture != "":
 		slack, err = slackintake.NewFixtureConnections(tasks, slackFixture)
-		if err != nil {
-			return err
-		}
+	}
+	if err != nil {
+		return err
 	}
 	handler := http.NewCrossOriginProtection().Handler(controlplane.Handler(tasks, web, artifacts, options.Runtime, projects, slack))
 	server := &http.Server{

@@ -25,6 +25,9 @@ type DeliveryBatch struct {
 }
 
 func (c *Connections) relayRequest(ctx context.Context, method string, p *store.SlackPairing, suffix string, body io.Reader) (*http.Response, error) {
+	if p.Relay != c.origin || !pairingIDPattern.MatchString(p.ID) {
+		return nil, store.ErrSlackTransition
+	}
 	req, err := http.NewRequestWithContext(ctx, method, c.origin+"/pairings/"+p.ID+suffix, body)
 	if err != nil {
 		return nil, ErrRelayUnavailable
@@ -56,7 +59,7 @@ func (c *Connections) relayChange(ctx context.Context, method string, p *store.S
 	}
 }
 
-// Run polls the loopback fixture while the API server is running.
+// Run polls the configured relay while the API server is running.
 func (c *Connections) Run(ctx context.Context) {
 	for delay := time.Second; ctx.Err() == nil; {
 		err := c.sync(ctx)
