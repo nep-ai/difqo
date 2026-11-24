@@ -35,24 +35,44 @@ try:
             ('ATEST', repeat('a', 32), decode(repeat('ab', 32), 'hex'), now(),
              'TTEST:UTEST', true, 'TTEST', 'UTEST', 'TTEST', 'DTEST'),
             ('ATEST', repeat('b', 32), decode(repeat('ab', 32), 'hex'), now(),
-             'TOTHER:UOTHER', true, 'TOTHER', 'UOTHER', 'TOTHER', 'DOTHER');
+             'TOTHER:UOTHER', true, 'TOTHER', 'UOTHER', 'TOTHER', 'DOTHER'),
+            ('AOTHER', repeat('c', 32), decode(repeat('ab', 32), 'hex'), now(),
+             'TTEST:UTEST', true, 'TTEST', 'UTEST', 'TTEST', 'DTEST');
+        INSERT INTO slack_relay_pairings
+            (app_id, id, proof_hash, expires_at, pilot_scope, installed_workspace, sealed_bot_token)
+        VALUES ('ATEST', repeat('d', 32), decode(repeat('ab', 32), 'hex'), now(),
+                'TTEST:UTEST', 'TTEST', decode('012345', 'hex'));
         INSERT INTO slack_relay_oauth_flows (app_id, pairing_id, purpose, state_hash, nonce)
-        VALUES ('ATEST', repeat('a', 32), 'identity', decode(repeat('cd', 32), 'hex'), 'fixture');
+        VALUES
+            ('ATEST', repeat('a', 32), 'identity', decode(repeat('cd', 32), 'hex'), 'fixture'),
+            ('ATEST', repeat('b', 32), 'identity', decode(repeat('ef', 32), 'hex'), 'fixture'),
+            ('AOTHER', repeat('c', 32), 'identity', decode(repeat('cd', 32), 'hex'), 'fixture');
         INSERT INTO slack_relay_events (app_id, workspace_id, event_id, pairing_id, goal, queued_at)
         VALUES
             ('ATEST', 'TTEST', 'Eold', repeat('a', 32), 'fixture goal', now() - interval '25 hours'),
             ('ATEST', 'TTEST', 'Efresh', repeat('a', 32), 'fixture goal', now()),
-            ('ATEST', 'TOTHER', 'Eother', repeat('b', 32), 'fixture goal', now() - interval '25 hours');
+            ('ATEST', 'TOTHER', 'Eother', repeat('b', 32), 'fixture goal', now() - interval '25 hours'),
+            ('AOTHER', 'TTEST', 'Eotherapp', repeat('c', 32), 'fixture goal', now() - interval '25 hours');
     """)
     operation("expire-slack-goals.sql", "-v", "retention_hours=24")
     assert sql("-c", "SELECT event_id FROM slack_relay_events WHERE goal IS NULL") == "Eold"
     for _ in range(2):
         operation("retire-slack-pilot.sql")
-    assert sql("-c", "SELECT event_id FROM slack_relay_events ORDER BY event_id") == "Efresh\nEold\nEother"
-    assert sql("-c", "SELECT event_id FROM slack_relay_events WHERE goal IS NOT NULL") == "Eother"
-    assert sql("-c", "SELECT revoked AND NOT claimed AND dm_channel = '' FROM slack_relay_pairings WHERE pilot_scope = 'TTEST:UTEST'") == "t"
-    assert sql("-c", "SELECT count(*) FROM slack_relay_oauth_flows") == "0"
-    assert sql("-c", "SELECT claimed FROM slack_relay_pairings WHERE pilot_scope = 'TOTHER:UOTHER'") == "t"
+    assert sql("-c", "SELECT event_id FROM slack_relay_events ORDER BY event_id") == "Efresh\nEold\nEother\nEotherapp"
+    assert sql("-c", "SELECT event_id FROM slack_relay_events WHERE goal IS NOT NULL ORDER BY event_id") == "Eother\nEotherapp"
+    assert sql("-c", """
+        SELECT count(*) FROM slack_relay_pairings
+        WHERE app_id = 'ATEST' AND pilot_scope = 'TTEST:UTEST'
+          AND revoked AND NOT claimed AND NOT approval_pending
+          AND verified_workspace = '' AND verified_operator = ''
+          AND installed_workspace = '' AND dm_channel = '' AND sealed_bot_token IS NULL
+    """) == "2"
+    assert sql("-c", """
+        SELECT app_id || ':' || left(pairing_id, 1) FROM slack_relay_oauth_flows ORDER BY app_id
+    """) == "AOTHER:c\nATEST:b"
+    assert sql("-c", """
+        SELECT app_id || ':' || pilot_scope FROM slack_relay_pairings WHERE claimed AND NOT revoked ORDER BY app_id
+    """) == "AOTHER:TTEST:UTEST\nATEST:TOTHER:UOTHER"
 finally:
     sql("-c", "DROP SCHEMA " + schema + " CASCADE", database=dsn)
 
