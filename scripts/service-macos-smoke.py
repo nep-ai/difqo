@@ -98,12 +98,22 @@ printf '%s\n' "$1" >> "$FIXTURE/cli"
     assert 'conflicts' in run(env, adapter, 'start', ok=False, DIFQO_DATABASE_URL=dsn + 'other')
     run(env, adapter, 'run')
     assert (work / 'cli').read_text().splitlines() == ['setup-database', 'server']
-    lock = state / '.service.lock'
-    lock.mkdir()
-    assert 'Another service operation' in run(env, adapter, 'stop', ok=False)
-    assert 'ready' in run(env, adapter, 'status')
-    assert not (work / 'stops').exists()
-    lock.rmdir()
+    lock = state / '.service-operation.lock'
+    assert lock.is_file()
+    holder = subprocess.Popen(
+        ['/bin/bash', '-ec', 'exec 9>> "$1"; /usr/bin/lockf -t 0 9; echo locked; exec /bin/sleep 30',
+         'fixture', lock],
+        text=True, stdout=subprocess.PIPE,
+    )
+    try:
+        assert holder.stdout.readline().strip() == 'locked'
+        assert 'Another service operation' in run(env, adapter, 'stop', ok=False)
+        assert 'ready' in run(env, adapter, 'status')
+        assert not (work / 'stops').exists()
+    finally:
+        holder.kill()
+        holder.communicate(timeout=5)
+    assert lock.is_file()
     run(env, adapter, 'stop')
     run(env, adapter, 'status', ok=False)
     assert config.read_text().strip() == dsn

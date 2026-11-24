@@ -70,8 +70,15 @@ for directory in "$HOME/Library" "$HOME/Library/Application Support" "$support" 
   mkdir -p "$directory"
 done
 [ "$(stat -f '%u:%Lp' "$state")" = "$uid:700" ] || fail 'Service configuration requires a private directory owned by the current user.'
-lock="$state/.service.lock"
-mkdir "$lock" || fail 'Another service operation holds the lock. Retry after it finishes.'
+lock="$state/.service-operation.lock"
+if [ -L "$lock" ] || { [ -e "$lock" ] && [ ! -f "$lock" ]; }; then
+  fail 'Service lock must be a regular file.'
+fi
+# Keep the lock on this shell's descriptor. The kernel releases it when the
+# last holder exits, even after a forced stop. Keep the file itself in place.
+exec 9>> "$lock"
+/usr/bin/lockf -s -t 0 9 || fail 'Another service operation holds the lock. Retry after it finishes.'
+stage=
 started_server=false
 started_database=false
 wrote_server=false
@@ -84,7 +91,7 @@ cleanup() {
     if "$wrote_server"; then rm -f "$agents/$server_label.plist"; fi
     if "$wrote_database"; then rm -f "$agents/$database_label.plist"; fi
   fi
-  rm -rf "$lock"
+  if [ -n "$stage" ]; then rm -rf "$stage"; fi
   exit "$result"
 }
 trap cleanup EXIT
@@ -102,6 +109,7 @@ if ! loaded "$server_label" && nc -z -w 1 127.0.0.1 8765 >/dev/null 2>&1; then
   fail 'Port 8765 is already occupied.'
 fi
 
+stage=$(mktemp -d "$state/.service-stage.XXXXXX")
 mode=managed
 if [ -e "$state/mode" ] || [ -L "$state/mode" ]; then
   private_file "$state/mode" || fail 'Service database mode is insecure.'
@@ -114,12 +122,12 @@ elif [ -n "${DIFQO_DATABASE_URL:-}" ]; then
   # Confirm the explicitly selected database before saving its configuration.
   "$bin/difqo" setup-database
   mode=external
-  printf '%s\n' "$DIFQO_DATABASE_URL" > "$lock/database-url"
+  printf '%s\n' "$DIFQO_DATABASE_URL" > "$stage/database-url"
   if [ -e "$state/database-url" ] || [ -L "$state/database-url" ]; then
-    private_file "$state/database-url" && cmp -s "$state/database-url" "$lock/database-url" ||
+    private_file "$state/database-url" && cmp -s "$state/database-url" "$stage/database-url" ||
       fail 'Existing database URL file conflicts with the supplied configuration.'
   else
-    mv "$lock/database-url" "$state/database-url"
+    mv "$stage/database-url" "$state/database-url"
   fi
 elif [ -e "$state/database-url" ] || [ -L "$state/database-url" ]; then
   fail 'An external database URL was saved during an earlier start. Supply that same URL to resume.'
@@ -140,14 +148,14 @@ case "$mode" in
   *) fail 'Unknown service database mode.' ;;
 esac
 if [ ! -f "$state/mode" ]; then
-  printf '%s\n' "$mode" > "$lock/mode"
-  mv "$lock/mode" "$state/mode"
+  printf '%s\n' "$mode" > "$stage/mode"
+  mv "$stage/mode" "$state/mode"
 fi
 
 write_agent() {
   local label=$1 file target arg index=0
   shift
-  file="$lock/$label.plist"
+  file="$stage/$label.plist"
   target="$agents/$label.plist"
   /usr/bin/plutil -create xml1 "$file"
   /usr/bin/plutil -insert Label -string "$label" "$file"
