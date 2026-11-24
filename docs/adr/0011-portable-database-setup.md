@@ -33,6 +33,14 @@ must establish the cluster and create the Difqo database and role before
 calling the portable setup command. The explicit existing-database option
 will continue to bypass provisioning.
 
+The Apple silicon bundle ships an adapter that accepts a trusted PostgreSQL 18
+binary directory. A mode-0700 cluster directory holds the port and private
+credential. Initialization uses an ephemeral user-private admin socket.
+The regular process serves only the non-superuser Difqo role over authenticated
+loopback TCP. The adapter temporarily starts PostgreSQL to apply migrations and
+then stops it. PostgreSQL binary distribution and per-user service registration
+are separate concerns.
+
 ## Consequences
 
 A setup failure leaves the previous database and migration history available

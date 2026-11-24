@@ -16,8 +16,8 @@ the supplied version. The checksum detects corruption relative to the
 manifest. A release installer must obtain its manifest through the trusted
 release channel. To run the unpacked app with an already migrated PostgreSQL
 database, set `DIFQO_DATABASE_URL` and run `bin/difqo server -web web` from
-the extracted directory. The bundle does not initialize a database or register
-a background service. CI builds and inspects the bundle without publishing.
+the extracted directory. Staging the bundle leaves database initialization and
+service registration to separate steps. CI builds and inspects the bundle without publishing.
 
 ## Verify the installer bootstrap
 
@@ -48,9 +48,10 @@ existing settings, data, and versions in place.
 
 The next installer slices are reviewed separately:
 
-1. **Platform PostgreSQL provisioning.** Review and implement the proposed
-   per-user PostgreSQL 18 cluster for clean machines. The portable
-   `setup-database` command below already handles a supplied database.
+1. **PostgreSQL distribution and other platform adapters.** Select a trusted
+   source for PostgreSQL 18 binaries on a clean Mac and implement provisioning
+   for Debian and native Windows. The Apple silicon adapter below accepts
+   an existing set of PostgreSQL binaries.
 2. **Per-user service.** Register a LaunchAgent for the configured server,
    wait for loopback health, and open the UI. Verify restart, rerun,
    update, and uninstall behavior while preserving data.
@@ -93,6 +94,44 @@ Setup records the operator-confirmed prefix and applies the remaining
 migrations. Use trusted SQL from the corresponding Difqo releases.
 See [ADR 0011](adr/0011-portable-database-setup.md) for the proposed default
 database on a clean machine and the provisioning boundary.
+
+### Provision a private PostgreSQL cluster on Apple silicon
+
+From an installed release, point the macOS adapter at a trusted PostgreSQL 18
+`bin` directory containing `postgres`, `initdb`, `pg_ctl`, and `psql`:
+
+```sh
+/bin/bash ./bin/provision-postgres-macos "$postgres_bin"
+```
+
+It stores data and a mode-0600 generated credential in
+`~/Library/Application Support/Difqo/postgres-18`. The cluster listens on
+`127.0.0.1:55432` and gives the Difqo role ownership of its database without
+superuser privileges. Set `DIFQO_POSTGRES_PORT` before the first run to choose
+another port. Reruns use the original port and credential, apply any pending
+migrations, and stop the cluster before returning. Stop it first if already
+running. If a temporary failure interrupts setup, fix the reported
+prerequisite and rerun with the same settings.
+
+To use the new database before service registration is available, start it
+manually and supply the connection URL to the server:
+
+```sh
+pg_root="$HOME/Library/Application Support/Difqo/postgres-18"
+"$postgres_bin/pg_ctl" -D "$pg_root/data" -l "$pg_root/postgres.log" start
+export DIFQO_DATABASE_URL="postgres://difqo:$(cat "$pg_root/password")@127.0.0.1:$(cat "$pg_root/port")/difqo?sslmode=disable"
+./bin/difqo server -web web
+# After stopping Difqo:
+"$postgres_bin/pg_ctl" -D "$pg_root/data" -m fast stop
+```
+
+For an existing database, run the portable setup command with its
+`DIFQO_DATABASE_URL`. The macOS adapter also delegates directly to that command
+when the variable is set. Verify the adapter with a disposable home:
+
+```sh
+python3 scripts/provision-postgres-smoke.py "$installed_release" "$postgres_bin"
+```
 
 ## Start from a source checkout
 
