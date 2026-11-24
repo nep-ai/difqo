@@ -105,7 +105,6 @@ fi
 # last holder exits, even after a forced stop. Keep the file itself in place.
 exec 9>> "$lock"
 /usr/bin/lockf -s -t 0 9 || fail 'Another service operation holds the lock. Retry after it finishes.'
-read_paused
 resuming=false
 stage=
 started_server=false
@@ -132,7 +131,7 @@ trap 'exit 143' TERM
 
 stop_jobs() {
   if loaded "$server_label"; then launchctl bootout "$domain/$server_label"; fi
-  if [ "${mode:-}" = managed ] && loaded "$database_label"; then launchctl bootout "$domain/$database_label"; fi
+  if [ "$1" = managed ] && loaded "$database_label"; then launchctl bootout "$domain/$database_label"; fi
 }
 
 disable_jobs() {
@@ -146,12 +145,13 @@ mark_pause() {
 }
 
 if [ "$action" = stop ]; then
-  if private_file "$state/mode"; then mode=$(cat "$state/mode"); fi
-  stop_jobs
+  # Stop both owned jobs even when saved configuration is unavailable.
+  stop_jobs managed
   printf 'Difqo services stopped. Settings and data are preserved.\n'
   exit
 fi
 
+read_paused
 stage=$(mktemp -d "$state/.service-stage.XXXXXX")
 if [ "$action" = pause ]; then
   private_file "$state/mode" || fail 'No saved service configuration to pause.'
@@ -160,7 +160,7 @@ if [ "$action" = pause ]; then
   # Save the intent first so an interrupted pause can be retried or resumed.
   mark_pause pending
   disable_jobs
-  stop_jobs
+  stop_jobs "$mode"
   mark_pause paused
   printf 'Difqo is paused. Settings and data are preserved.\n'
   exit
@@ -247,7 +247,7 @@ write_agent "$server_label" /bin/bash "$bin/service-macos" run
 if [ "$mode" = managed ]; then
   write_agent "$database_label" "$postgres" -D "$database/data"
 fi
-if [ "$action" = restart ] || "$paused"; then stop_jobs; fi
+if [ "$action" = restart ] || "$paused"; then stop_jobs "$mode"; fi
 if "$paused"; then
   resuming=true
   mark_pause pending

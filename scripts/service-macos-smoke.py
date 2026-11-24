@@ -175,6 +175,15 @@ printf '%s\n' "$1" >> "$FIXTURE/cli"
     assert 'running' in run(env, adapter, 'restart')
     assert (work / 'stops').read_text().splitlines()[-2:] == ['com.difqo.server', 'com.difqo.postgresql']
     assert (work / 'starts').read_text().splitlines()[-2:] == ['com.difqo.postgresql', 'com.difqo.server']
+    mode_file = home / 'Library/Application Support/Difqo/service/mode'
+    mode_file.chmod(0o644)
+    run(env, adapter, 'stop')
+    assert not list(work.glob('com.difqo.*'))
+    assert mode_file.read_text().strip() == 'managed'
+    assert mode_file.stat().st_mode & 0o777 == 0o644
+    mode_file.chmod(0o600)
+    run(env, adapter, 'start')
+    mode_file.unlink()
     run(env, adapter, 'stop')
     assert (pg / 'password').read_text().strip() == 'a' * 64
     assert not list(work.glob('com.difqo.*'))
