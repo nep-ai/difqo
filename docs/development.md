@@ -1,5 +1,26 @@
 # Local development
 
+## Apple silicon release bundle
+
+From the repository root, with Go 1.26 and Node 24 available:
+
+```sh
+corepack pnpm@10.34.9 install --frozen-lockfile
+corepack pnpm@10.34.9 --filter difqo-local-ui build
+bundle=$(bash scripts/package-macos.sh v0.1.0-alpha.1 /tmp/difqo-release)
+(cd "$bundle" && shasum -a 256 -c SHA256SUMS)
+```
+
+The archive contains `bin/difqo`, `web/`, `migrations/`, the license, and
+the supplied version. The checksum detects corruption relative to the
+manifest. A release installer must obtain its manifest through the trusted
+release channel. To run the unpacked app with an already migrated PostgreSQL
+database, set `DIFQO_DATABASE_URL` and run `bin/difqo server -web web` from
+the extracted directory. The bundle does not initialize a database or register
+a background service. CI builds and inspects the bundle without publishing.
+
+## Start from a source checkout
+
 Install Go 1.26 or later, Git, and PostgreSQL. Start PostgreSQL on the host and
 create a disposable local database. The sample connection assumes your
 PostgreSQL server accepts your local user over loopback. Adjust it to match your
