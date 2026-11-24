@@ -18,13 +18,26 @@ fi
 mkdir -p "$2"
 output=$(cd "$2" && pwd)
 cd "$root"
+lock="$output/.$bundle.lock"
+if ! mkdir "$lock"; then
+  printf 'Cannot reserve output for %s\n' "$bundle" >&2
+  exit 1
+fi
+stage=
+cleanup() {
+  if [ -n "$stage" ]; then
+    rm -rf "$stage"
+  fi
+  rmdir "$lock"
+}
+trap cleanup EXIT
+
 if [ -e "$output/$bundle" ] || [ -L "$output/$bundle" ]; then
   printf 'Output already exists: %s\n' "$output/$bundle" >&2
   exit 1
 fi
 
 stage=$(mktemp -d "$output/.difqo-package.XXXXXX")
-trap 'rm -rf "$stage"' EXIT
 mkdir -p "$stage/payload/bin" "$stage/payload/web" "$stage/payload/migrations" "$stage/release"
 
 CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 go build -trimpath -o "$stage/payload/bin/difqo" ./cmd/difqo

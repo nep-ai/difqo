@@ -45,8 +45,19 @@ jobs:
       - run: corepack pnpm@10.34.9 --filter difqo-local-ui build
       - name: Verify the Apple silicon bundle
         run: |
-          bundle=$(bash scripts/package-macos.sh v0.0.0-ci "$RUNNER_TEMP")
+          build_dir=$(mktemp -d "$RUNNER_TEMP/difqo-build.XXXXXX")
+          bash scripts/package-macos.sh v0.0.0-ci "$build_dir" > "$build_dir/first.log" 2>&1 &
+          first=$!
+          bash scripts/package-macos.sh v0.0.0-ci "$build_dir" > "$build_dir/second.log" 2>&1 &
+          second=$!
+          successes=0
+          if wait "$first"; then successes=$((successes + 1)); fi
+          if wait "$second"; then successes=$((successes + 1)); fi
+          cat "$build_dir/first.log" "$build_dir/second.log"
+          test "$successes" -eq 1
+          bundle="$build_dir/difqo-v0.0.0-ci-darwin-arm64"
           cd "$bundle"
+          test ! -e release
           shasum -a 256 -c SHA256SUMS
           mkdir extracted
           tar -xzf difqo-v0.0.0-ci-darwin-arm64.tar.gz -C extracted
