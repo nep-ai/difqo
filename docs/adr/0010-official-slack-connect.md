@@ -211,7 +211,8 @@ cannot create a task or send a receipt for the retired generation.
 
 For the full delivery test, apply `migrations/*.sql` to a second disposable
 database and set `DIFQO_SLACK_DELIVERY_TEST_DATABASE_URL` as well as the relay
-test database URL. Run `go test -race -count=1 ./internal/slackrelay`.
+test database URL. Run
+`go test -race -count=1 ./internal/slackrelay ./internal/slackintake`.
 Automatic retention, workspace installation reuse, live Slack revocation
 events, and hosted deployment remain follow-up work.
 An outgoing-only local client keeps the workstation off the public Internet.
