@@ -164,6 +164,8 @@ a PostgreSQL job only for the private cluster. It refuses a port already in use 
 and changes to the saved database selection.
 
 When the database-backed health check passes, open `http://127.0.0.1:8765`.
+The server job searches the standard system, Homebrew, and Docker Desktop
+binary directories for the container CLI used by review reruns.
 Logs are under `~/Library/Application Support/Difqo/service`.
 `./bin/service-macos stop` unloads the service for the current login and
 preserves the database, settings, and LaunchAgent files for the next login.

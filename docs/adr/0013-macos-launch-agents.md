@@ -17,6 +17,8 @@ agent. An external database is managed by its operator.
 
 The server launcher reads the selected mode and credentials from private files.
 The agent plists contain executable paths and the user's home directory.
+The server plist sets an explicit search path for standard container tools.
+A shared lock prevents start and stop operations from overlapping.
 The server binds to its existing loopback address, and startup waits for
 the database-backed task endpoint. On failure, unload the jobs started by
 that invocation and remove the plists it created. Keep any existing jobs

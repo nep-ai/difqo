@@ -59,27 +59,19 @@ healthy() {
 }
 
 launchctl print "$domain" >/dev/null 2>&1 || fail 'Run from a logged-in macOS graphical session.'
-case "$1" in
-  status)
-    loaded "$server_label" && healthy || fail 'Difqo is not healthy.'
-    printf 'Difqo is ready at %s\n' "$url"
-    exit
-    ;;
-  stop)
-    if loaded "$server_label"; then launchctl bootout "$domain/$server_label"; fi
-    if loaded "$database_label"; then launchctl bootout "$domain/$database_label"; fi
-    printf 'Difqo services stopped. Settings and data are preserved.\n'
-    exit
-    ;;
-esac
+if [ "$1" = status ]; then
+  loaded "$server_label" && healthy || fail 'Difqo is not healthy.'
+  printf 'Difqo is ready at %s\n' "$url"
+  exit
+fi
 
 for directory in "$HOME/Library" "$HOME/Library/Application Support" "$support" "$state" "$support/artifacts" "$agents"; do
   [ ! -L "$directory" ] || fail "Directory is a symbolic link: $directory"
   mkdir -p "$directory"
 done
 [ "$(stat -f '%u:%Lp' "$state")" = "$uid:700" ] || fail 'Service configuration requires a private directory owned by the current user.'
-lock="$state/.start.lock"
-mkdir "$lock" || fail 'Another service start holds the lock. Remove it only after confirming the start has stopped.'
+lock="$state/.service.lock"
+mkdir "$lock" || fail 'Another service operation holds the lock. Retry after it finishes.'
 started_server=false
 started_database=false
 wrote_server=false
@@ -98,6 +90,13 @@ cleanup() {
 trap cleanup EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
+
+if [ "$1" = stop ]; then
+  if loaded "$server_label"; then launchctl bootout "$domain/$server_label"; fi
+  if loaded "$database_label"; then launchctl bootout "$domain/$database_label"; fi
+  printf 'Difqo services stopped. Settings and data are preserved.\n'
+  exit
+fi
 
 if ! loaded "$server_label" && nc -z -w 1 127.0.0.1 8765 >/dev/null 2>&1; then
   fail 'Port 8765 is already occupied.'
@@ -164,6 +163,10 @@ write_agent() {
   # launchd does not promise to inherit the shell's HOME.
   /usr/bin/plutil -insert EnvironmentVariables -dictionary "$file"
   /usr/bin/plutil -insert EnvironmentVariables.HOME -string "$HOME" "$file"
+  if [ "$label" = "$server_label" ]; then
+    /usr/bin/plutil -insert EnvironmentVariables.PATH -string \
+      '/usr/bin:/bin:/usr/sbin:/sbin:/opt/homebrew/bin:/usr/local/bin:/Applications/Docker.app/Contents/Resources/bin' "$file"
+  fi
   if [ -e "$target" ] || [ -L "$target" ]; then
     private_file "$target" && cmp -s "$file" "$target" || fail "Existing LaunchAgent differs: $target"
   else

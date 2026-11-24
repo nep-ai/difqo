@@ -86,7 +86,10 @@ printf '%s\n' "$1" >> "$FIXTURE/cli"
     plist = plistlib.loads(server_plist.read_bytes())
     assert plist['ProgramArguments'] == ['/bin/bash', str(adapter), 'run']
     assert plist['RunAtLoad'] and plist['KeepAlive']
-    assert plist['EnvironmentVariables'] == {'HOME': str(home)}
+    assert plist['EnvironmentVariables']['HOME'] == str(home)
+    search_path = plist['EnvironmentVariables']['PATH'].split(':')
+    assert {'/opt/homebrew/bin', '/usr/local/bin', '/Applications/Docker.app/Contents/Resources/bin'} <= set(search_path)
+    assert str(tools) not in search_path
     assert dsn not in json.dumps(plist)
     assert not (agents / 'com.difqo.postgresql.plist').exists()
     assert 'ready' in run(env, adapter, 'start')
@@ -95,6 +98,12 @@ printf '%s\n' "$1" >> "$FIXTURE/cli"
     assert 'conflicts' in run(env, adapter, 'start', ok=False, DIFQO_DATABASE_URL=dsn + 'other')
     run(env, adapter, 'run')
     assert (work / 'cli').read_text().splitlines() == ['setup-database', 'server']
+    lock = state / '.service.lock'
+    lock.mkdir()
+    assert 'Another service operation' in run(env, adapter, 'stop', ok=False)
+    assert 'ready' in run(env, adapter, 'status')
+    assert not (work / 'stops').exists()
+    lock.rmdir()
     run(env, adapter, 'stop')
     run(env, adapter, 'status', ok=False)
     assert config.read_text().strip() == dsn
