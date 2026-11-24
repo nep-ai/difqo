@@ -17,14 +17,28 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/nep-ai/difqo/internal/connections"
 	"github.com/nep-ai/difqo/internal/slackrelay"
+	"github.com/nep-ai/difqo/relay/migrations"
 )
 
 func main() {
 	listen := flag.String("listen", "127.0.0.1:8766", "numeric loopback listener behind HTTPS ingress")
+	railway := flag.Bool("railway", false, "serve through the same-container Railway ingress")
+	migrate := flag.Bool("migrate", false, "apply pending relay database migrations")
 	flag.Parse()
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	if err := run(ctx, *listen); err != nil {
+	var err error
+	switch {
+	case *railway && *migrate:
+		err = errors.New("choose either -railway or -migrate")
+	case *migrate:
+		err = migrations.Apply(ctx, os.Getenv("DIFQO_RELAY_DATABASE_URL"))
+	case *railway:
+		err = runRailway(ctx, *listen, os.Getenv("PORT"))
+	default:
+		err = run(ctx, *listen)
+	}
+	if err != nil {
 		log.Fatal(err)
 	}
 }
@@ -72,8 +86,12 @@ func run(ctx context.Context, address string) error {
 	if err != nil {
 		return err
 	}
+	return serve(ctx, listener, connections.Handler(provider, ready))
+}
+
+func serve(ctx context.Context, listener net.Listener, handler http.Handler) error {
 	server := &http.Server{
-		Handler:           connections.Handler(provider, ready),
+		Handler:           handler,
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       10 * time.Second,
 		WriteTimeout:      15 * time.Second,
@@ -92,7 +110,7 @@ func run(ctx context.Context, address string) error {
 		case <-done:
 		}
 	}()
-	err = server.Serve(listener)
+	err := server.Serve(listener)
 	close(done)
 	<-stopped
 	if !errors.Is(err, http.ErrServerClosed) {

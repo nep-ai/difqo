@@ -14,7 +14,7 @@ scoped = urlunsplit(url._replace(query=urlencode(params + [("options", "-csearch
 
 
 def sql(*args, database=scoped):
-    return subprocess.run(["psql", "-XqAt", database, "-v", "ON_ERROR_STOP=1", *args],
+    return subprocess.run(["psql", "-XqAt", "--dbname", database, "-v", "ON_ERROR_STOP=1", *args],
                           capture_output=True, text=True, check=True).stdout.strip()
 
 
