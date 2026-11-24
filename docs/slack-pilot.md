@@ -135,6 +135,60 @@ state on the relay.
 Record only test outcomes and redacted identifiers. Live authorization and
 deployment require maintainer approval.
 
+## Railway staging
+
+The approved pilot origin is `https://connections-staging.difqo.com`.
+[Railway IaC](https://docs.railway.com/infrastructure-as-code) uses
+`.railway/railway.ts` to define one Connections replica and a dedicated
+`RelayPostgres` service. PostgreSQL has no public proxy. The relay uses the
+private `DATABASE_URL` reference and Railway HTTPS ingress targets port
+8080. Inside the same container, the proxy forwards to Connections at
+`127.0.0.1:8766` without rewriting signed bodies or logging requests.
+
+1. In the approved Railway project and staging environment, install the
+   IaC SDK with
+   `npm install --prefix .railway --no-save --package-lock=false railway@3.17.0`.
+   Populate the named `DIFQO_CONNECTIONS_ORIGIN` and `DIFQO_SLACK_*` shared
+   variables in Railway. Start with synthetic settings. Keep live values
+   in Railway, and run `railway config plan` without showing values. Verify
+   the project and environment, private database, Dockerfile, pre-deploy
+   command, and readiness check before applying the reviewed plan.
+2. On the new private database, Railway runs `/connections -migrate` from
+   the built image before exposing the service. The command applies embedded
+   migrations in a transaction, serializes concurrent deployments, and skips
+   recorded migrations with matching checksums. For a database initialized
+   outside this runner, reconcile the schema and migration ledger separately
+   before linking it. A failure blocks deployment. Inspect the failed
+   migration name and SQLSTATE when available, verify the database reference, and retry the deployment
+   after fixing the cause. Keep the prior deployment serving if it remains
+   compatible. Avoid rollback to an older schema.
+3. After the synthetic health checks pass, attach
+   `connections-staging.difqo.com` to the Connections service at port 8080.
+   Apply the exact DNS records Railway returns, wait for TLS, and check
+   `/readyz` and `/healthz` at the approved origin. Keep the database private.
+   Rerun readiness after restarting Connections and verify pairing and
+   queue records persisted on the same database volume.
+4. Once the operator and app admin authorize live traffic, configure the
+   Slack OAuth redirects `https://connections-staging.difqo.com/oauth/identity`
+   and `https://connections-staging.difqo.com/oauth/install`, and the Events
+   URL `https://connections-staging.difqo.com/slack/events`. Follow the
+   local OAuth handoff and the scoped `nepai` acceptance above. For recovery,
+   use the retirement and database restore procedure below before restoring
+   ingress.
+
+Go CI builds and runs the container against a private synthetic PostgreSQL
+container. To repeat the image rehearsal locally, run:
+
+```sh
+docker build -t difqo-connections:smoke -f containers/connections/Dockerfile .
+python3 scripts/connections-container-smoke.py difqo-connections:smoke
+```
+
+Set `CONTAINER_RUNTIME=podman` for the smoke script if the image was built
+with Podman. The rehearsal exercises migration replay, signed challenge
+and tamper rejection at the ingress, protected enrollment, restart,
+and revocation.
+
 ## Staging runbook
 
 Use a dedicated relay database and the packaged Connections binary from one
@@ -172,13 +226,26 @@ returned to an authenticated local poll. Keep pairing tombstones and event
 IDs for the pilot so retries cannot create duplicate tasks. Apply the
 approved retention policy to backups and any log storage as well.
 
-Use a secret-injected maintenance DSN and the exact configured app and
-workspace/operator IDs. From the checkout, run the following with the
+Run maintenance and restores from an authorized maintenance container in the
+same Railway staging environment, on the private network. Keep PostgreSQL
+without public TCP exposure. Use Railway SSH into the maintenance service
+and connect to the private `RelayPostgres` hostname. Keep that service
+separate from Connections so it remains available while the relay is stopped.
+Restore backups from the same private network and verify the target database
+before running retirement.
+[Railway private networking](https://docs.railway.com/networking/private-networking) ·
+[Railway SSH](https://docs.railway.com/cli/ssh)
+
+Set `PGHOST`, `PGPORT`, `PGUSER`, and `PGDATABASE` to the private hostname,
+port, maintenance role, and database name. Supply the password through a
+secret-injected `PGPASSFILE` readable only by the maintenance user (mode
+`0600`). Use the exact configured app and workspace/operator IDs. From the checkout, run the following with the
 approved retention hours (24 shown).
 
 ```sh
 pilot_scope="${DIFQO_SLACK_WORKSPACE_ID}:${DIFQO_SLACK_OPERATOR_ID}"
-PGDATABASE="$DIFQO_RELAY_DATABASE_URL" psql -X -v ON_ERROR_STOP=1 \
+psql -X --no-password --host "$PGHOST" --port "$PGPORT" \
+  --username "$PGUSER" --dbname "$PGDATABASE" -v ON_ERROR_STOP=1 \
   -v app_id="$DIFQO_SLACK_APP_ID" -v pilot_scope="$pilot_scope" \
   -v retention_hours=24 -f relay/operations/expire-slack-goals.sql
 ```
@@ -189,7 +256,8 @@ pilot scope and scrub queued bodies in one transaction.
 
 ```sh
 pilot_scope="${DIFQO_SLACK_WORKSPACE_ID}:${DIFQO_SLACK_OPERATOR_ID}"
-PGDATABASE="$DIFQO_RELAY_DATABASE_URL" psql -X -v ON_ERROR_STOP=1 \
+psql -X --no-password --host "$PGHOST" --port "$PGPORT" \
+  --username "$PGUSER" --dbname "$PGDATABASE" -v ON_ERROR_STOP=1 \
   -v app_id="$DIFQO_SLACK_APP_ID" -v pilot_scope="$pilot_scope" \
   -f relay/operations/retire-slack-pilot.sql
 ```

@@ -77,8 +77,13 @@ jobs:
             go test -race -count=1 ./internal/slackrelay ./internal/slackintake
           DIFQO_SLACK_RELAY_TEST_DATABASE_URL="postgres://postgres:smoke-test@127.0.0.1:${POSTGRES_PORT}/difqo_relay_smoke?sslmode=disable" \
             python3 scripts/connections-smoke.py bin/connections
-          DIFQO_SLACK_RELAY_TEST_DATABASE_URL="postgres://postgres:smoke-test@127.0.0.1:${POSTGRES_PORT}/difqo_relay_smoke?sslmode=disable" \
+          DIFQO_SLACK_RELAY_TEST_DATABASE_URL="postgresql:///difqo_relay_smoke?host=127.0.0.1&port=${POSTGRES_PORT}&user=postgres&password=smoke-test&sslmode=disable" \
             python3 scripts/slack-staging-smoke.py
+
+      - name: Rehearse the Railway Connections container
+        run: |
+          docker build -t difqo-connections:smoke -f containers/connections/Dockerfile .
+          python3 scripts/connections-container-smoke.py difqo-connections:smoke
 
       - name: Build Codex execution and smoke images
         run: |

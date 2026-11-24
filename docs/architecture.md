@@ -130,8 +130,9 @@ See [ADR 0005](adr/0005-specialist-configuration.md) and
 ```mermaid
 flowchart LR
     Browser["React + Vite web app"] <-->|"Shared conversation and task actions"| Intake
-    Slack["Slack"] <-->|"OAuth, DM events, files, and interactive replies"| SlackRelay["Slack provider in Connections"]
-    SlackRelay <-->|"Outbound enrollment, delivery, and replies over HTTPS"| SlackConnector["Local official Slack connector"]
+    Slack["Slack"] <-->|"OAuth, signed DM events, files, and interactive replies"| RelayIngress["Railway HTTPS ingress and same-container proxy"]
+    RelayIngress -->|"Unchanged signed request body"| SlackRelay["Slack provider on Connections loopback"]
+    SlackRelay <-->|"Outbound enrollment, OAuth handoff, delivery, and replies over HTTPS"| SlackConnector["Local official Slack connector"]
     Slack <-->|"Optional private app over Socket Mode"| SlackSocket["Local private Slack connector"]
     SlackConnector <-->|"Shared conversation and task actions"| Intake
     SlackSocket <-->|"Shared conversation and task actions"| Intake
