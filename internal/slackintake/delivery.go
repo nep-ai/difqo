@@ -28,11 +28,15 @@ func (c *Connections) relayRequest(ctx context.Context, method string, p *store.
 	if p.Relay != c.origin || !pairingIDPattern.MatchString(p.ID) {
 		return nil, store.ErrSlackTransition
 	}
-	req, err := http.NewRequestWithContext(ctx, method, c.origin+"/pairings/"+p.ID+suffix, body)
+	return c.request(ctx, method, "/pairings/"+p.ID+suffix, p.Proof, body)
+}
+
+func (c *Connections) request(ctx context.Context, method, path, bearer string, body io.Reader) (*http.Response, error) {
+	req, err := http.NewRequestWithContext(ctx, method, c.origin+path, body)
 	if err != nil {
 		return nil, ErrRelayUnavailable
 	}
-	req.Header.Set("Authorization", "Bearer "+p.Proof)
+	req.Header.Set("Authorization", "Bearer "+bearer)
 	if body != nil {
 		req.Header.Set("Content-Type", "application/json")
 	}
@@ -49,14 +53,7 @@ func (c *Connections) relayChange(ctx context.Context, method string, p *store.S
 		return err
 	}
 	defer res.Body.Close()
-	switch res.StatusCode {
-	case http.StatusNoContent:
-		return nil
-	case http.StatusConflict:
-		return store.ErrSlackTransition
-	default:
-		return ErrRelayUnavailable
-	}
+	return relayChangeResult(res.StatusCode)
 }
 
 // Run polls the configured relay while the API server is running.
@@ -218,7 +215,7 @@ func (c *Connections) finishClaim(ctx context.Context, expected store.SlackConne
 }
 
 func (c *Connections) finishDisconnect(ctx context.Context, expected store.SlackConnection) (ConnectionView, error) {
-	if err := c.relayChange(ctx, http.MethodDelete, expected.Pairing, "", nil); err != nil {
+	if err := c.revoke(ctx, expected.Pairing); err != nil {
 		return connectionView(expected), err
 	}
 	state, err := c.tasks.UpdateSlackConnection(ctx, func(s *store.SlackConnection) error {

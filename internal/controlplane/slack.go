@@ -11,6 +11,7 @@ import (
 func registerSlackConnection(router *http.ServeMux, connections *slackintake.Connections) {
 	respond := func(w http.ResponseWriter, view slackintake.ConnectionView, err error) {
 		w.Header().Set("Cache-Control", "no-store")
+		w.Header().Set("Referrer-Policy", "no-referrer")
 		switch {
 		case errors.Is(err, store.ErrSlackTransition):
 			http.Error(w, err.Error(), http.StatusConflict)
@@ -41,6 +42,8 @@ func registerSlackConnection(router *http.ServeMux, connections *slackintake.Con
 		switch in.Action {
 		case "begin":
 			view, err = connections.Begin(r.Context())
+		case "start_identity", "start_install", "approval_needed":
+			view, err = connections.OAuth(r.Context(), in.PairingID, in.Action)
 		case "refresh":
 			view, err = connections.Refresh(r.Context(), in.PairingID)
 		case "confirm":

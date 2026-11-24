@@ -166,7 +166,7 @@ func run(args []string) error {
 	var slack *slackintake.Connections
 	switch {
 	case slackRelay != "":
-		slack, err = slackintake.NewHTTPSConnections(tasks, slackRelay)
+		slack, err = slackintake.NewPilotConnections(tasks, slackRelay, os.Getenv("DIFQO_SLACK_ENROLLMENT_TOKEN"))
 	case slackFixture != "":
 		slack, err = slackintake.NewFixtureConnections(tasks, slackFixture)
 	}

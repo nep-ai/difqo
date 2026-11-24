@@ -3,8 +3,7 @@
 This checklist covers the first official Slack pilot in the `nepai` workspace.
 The local client supports a configured HTTPS relay. Build the Connections
 process with `go build ./cmd/connections`. It serves the Slack provider over
-a numeric loopback listener behind an HTTPS ingress. The operator-facing
-OAuth handoff remains a prerequisite for live acceptance.
+a numeric loopback listener behind an HTTPS ingress. The local API provides the OAuth URL handoff for the pilot operator.
 
 ## Before deployment
 
@@ -16,10 +15,6 @@ OAuth handoff remains a prerequisite for live acceptance.
 - Keep the Connections listener on loopback and route the configured HTTPS
   origin to it. Keep the Slack callback and signed event routes reachable.
   The process uses only Slack's official origin for provider requests.
-- Ship the local handoff. The approved operator must enroll the locally
-  generated pairing before starting OAuth. The local service then calls
-  the identity and installation routes with its pairing proof. Only the
-  returned OAuth URLs go to the browser.
 - Set and verify a retention limit for undelivered goal bodies. Ensure
   access logs omit request bodies, OAuth callback query strings, and
   authorization headers. Configure bounded request timeouts at ingress.
@@ -87,12 +82,35 @@ handling is implemented.
   client and the Slack-signed URL challenge through ingress. Verify a request
   without a pairing proof cannot read any queue.
 - Start local Difqo with `difqo server -slack-relay https://<relay-host>`.
-  Supply a pathless origin and use the system trust store. Keep the local API
-  on loopback. If the relay address changes during a pending claim or
+  Supply a pathless origin, use the system trust store, and inject
+  `DIFQO_SLACK_ENROLLMENT_TOKEN` into the local server environment for
+  enrollment. Keep the local API on loopback. If the relay address changes during a pending claim or
   disconnect, restore the original address before retrying.
 - Before the live test, verify the TLS fixture and loopback delivery suite on
   disposable PostgreSQL with both DSNs described in
   [ADR 0010](adr/0010-official-slack-connect.md).
+
+## Local OAuth handoff
+
+Send JSON actions with an HTTP POST to the local `/slack/connection` API.
+Use the `pairing_id` returned by `begin` for each subsequent action.
+
+| Action | What to do |
+| --- | --- |
+| `begin` | Create and enroll a pairing. Retry this action if the relay was unavailable. |
+| `start_identity` | Open the returned `oauth_url` in the browser and sign in as the approved operator. |
+| `refresh` | After the identity callback, check `verified_workspace` and `verified_operator`. |
+| `start_install` | Open the returned `oauth_url` and complete the workspace installation. |
+| `approval_needed` | Use after Slack requests workspace approval, then retry `start_install` once approved. |
+| `refresh` | After the install callback, check for `ready_to_link` and verify the displayed `binding`. |
+| `confirm` | Send the exact displayed `binding` to activate delivery. |
+| `disconnect` | Send the current `generation` and `pairing_id` to revoke or cancel. |
+
+The API returns authorization URLs for the two start actions only. The
+enrollment credential and pairing proof stay on the server side. Each URL
+must target Slack, include the expected relay callback, and have the
+parameters for that OAuth flow. Slack callbacks still consume one-time
+state on the relay.
 
 ## Acceptance in nepai
 
