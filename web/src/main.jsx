@@ -71,7 +71,7 @@ function Evidence({ id, file, label, download = false }) {
     </div>}
     {content.status === 'ready' && <>
       <pre className="output" tabIndex={0} aria-label={label}>{content.text || 'This file is empty.'}</pre>
-      {download && <a className="download" href={api + endpoint} download={'difqo-' + id + '.diff'}>Download patch</a>}
+      {download && <a className="download" href={api + endpoint} download={'difqo-' + id + '.diff'}>Download diff</a>}
     </>}
   </details>
 }
@@ -136,25 +136,25 @@ function PatchReview({ goal }) {
     }
   }
 
-  let status = 'Rerun the check to approve this patch.'
+  let status = 'Rerun the check to approve these changes.'
   if (check?.status === 'failed') status = 'Rerun failed (exit ' + check.exit_code + ').'
   if (check?.status === 'interrupted') status = 'Rerun interrupted. Run the check again.'
   if (check?.status === 'passed') status = 'Rerun passed.'
-  if (approved) status = 'Patch approved.'
-  if (review && !review.patch_available) status = 'The saved patch is missing or has changed.'
-  if (running) status = 'Running the check on the saved base and patch…'
+  if (approved) status = 'Changes approved.'
+  if (review && !review.patch_available) status = 'The saved diff is missing or has changed.'
+  if (running) status = 'Checking the saved changes against the original base…'
   if (!review && !busy) status = ''
 
   return <details className="review" onToggle={event => setOpen(event.currentTarget.open)}>
-    <summary>Review patch</summary>
+    <summary>Review changes</summary>
     <dl className="facts review-facts">
       <dt>Project decision</dt><dd>{goal.decision ? <>Revision {goal.decision.id}<p>{goal.decision.body}</p></> : 'No decision was saved for this goal.'}</dd>
       <dt>Base commit</dt><dd><code>{snapshot.base}</code></dd>
-      <dt>Patch SHA-256</dt><dd><code>{snapshot.patch_sha256}</code></dd>
+      <dt>Diff SHA-256</dt><dd><code>{snapshot.patch_sha256}</code></dd>
       <dt>Check command</dt><dd><code>{snapshot.command}</code></dd>
       <dt>Original check</dt><dd>{result.exit_code === 0 ? 'Passed' : 'Exit ' + result.exit_code}</dd>
     </dl>
-    <Evidence id={goal.id} file="change.diff" label="View patch" download />
+    <Evidence id={goal.id} file="change.diff" label="View diff" download />
     <Evidence id={goal.id} file="check.log" label="View original check log" />
     {result.exit_code !== 0 && <Evidence id={goal.id} file="execution.log" label="View execution diagnostic" />}
     {check?.output && !running && <details>
@@ -163,16 +163,16 @@ function PatchReview({ goal }) {
     </details>}
     {open && !review && !busy && !loadFailed && <p role="status">Loading review…</p>}
     {status && <p role="status" className="review-status">{status}</p>}
-    {loadFailed && <p role="alert">Couldn’t load patch review.</p>}
+    {loadFailed && <p role="alert">Couldn’t load the review.</p>}
     {actionError && <p role="alert">{actionError}</p>}
     <div className="actions">
       {!review && loadFailed && <button onClick={() => { setLoadFailed(false); setRefresh(value => value + 1) }}>Refresh review</button>}
       {review?.patch_available && !approved && <>
         <button disabled={running || Boolean(busy)} onClick={() => act('rerun')}>Rerun check</button>
-        <button className="primary" disabled={running || Boolean(busy) || check?.status !== 'passed'} onClick={() => act('approve')}>Approve patch</button>
+        <button className="primary" disabled={running || Boolean(busy) || check?.status !== 'passed'} onClick={() => act('approve')}>Approve changes</button>
       </>}
     </div>
-    {review?.patch_available && !approved && <p>Approval records your review. Apply the downloaded patch manually.</p>}
+    {review?.patch_available && !approved && <p>Approval records your review. Download the diff to apply the changes manually.</p>}
   </details>
 }
 
@@ -342,7 +342,7 @@ function ProjectFile({ goal }) {
     {result?.snapshot && <PatchReview goal={goal} key={goal.attempt.id} />}
     {result?.artifacts && !result.snapshot && <details className="review" key={goal.attempt.id}>
       <summary>View run evidence</summary>
-      <Evidence id={goal.id} file="change.diff" label="View patch" download />
+      <Evidence id={goal.id} file="change.diff" label="View diff" download />
       <Evidence id={goal.id} file="check.log" label="View logs" />
       {failed && <Evidence id={goal.id} file="execution.log" label="View execution diagnostic" />}
     </details>}

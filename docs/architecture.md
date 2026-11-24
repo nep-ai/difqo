@@ -129,12 +129,12 @@ See [ADR 0005](adr/0005-specialist-configuration.md) and
 
 ```mermaid
 flowchart LR
-    Browser["React + Vite web app"] --> Intake
-    Slack["Slack"] <-->|"Official app OAuth and signed DM events"| SlackRelay["Slack provider in Connections"]
-    SlackRelay <-->|"Outbound enrollment, OAuth handoff, and delivery over configured HTTPS"| SlackConnector["Local official Slack connector"]
+    Browser["React + Vite web app"] <-->|"Shared conversation and task actions"| Intake
+    Slack["Slack"] <-->|"OAuth, DM events, files, and interactive replies"| SlackRelay["Slack provider in Connections"]
+    SlackRelay <-->|"Outbound enrollment, delivery, and replies over HTTPS"| SlackConnector["Local official Slack connector"]
     Slack <-->|"Optional private app over Socket Mode"| SlackSocket["Local private Slack connector"]
-    SlackConnector --> Intake
-    SlackSocket --> Intake
+    SlackConnector <-->|"Shared conversation and task actions"| Intake
+    SlackSocket <-->|"Shared conversation and task actions"| Intake
     GitHub["GitHub API"] <-->|"Read comments and deliver approved replies"| GitHubPoller["Local outbound GitHub poller"]
     Official["Hosted Difqo credential service"] -->|"Scoped installation tokens"| GitHubPoller
     Private["Local private app credentials"] -->|"Mint installation tokens directly with GitHub"| GitHubPoller
@@ -142,13 +142,19 @@ flowchart LR
 
     subgraph Server["Go server process"]
         Intake["Shared task intake"] --> CoS["Chief of Staff"]
-        CoS --> Policy["Policy, approvals, and tool gateway"]
+        CoS -->|"Delegate work and review"| Policy["Policy, approvals, and tool gateway"]
         Policy --> TaskAPI["Task API and scheduler"]
+        Policy --> Publisher["Project-scoped PR publisher"]
     end
 
     Intake --> DB[("Host PostgreSQL")]
     TaskAPI --> DB
+    Publisher -->|"Reconcile branch, PR, and current-head evidence"| DB
+    Publisher <-->|"Push a branch, open a draft, and update review state"| GitHub
+    Official -->|"Repository-scoped publication credentials"| Publisher
+    Private -->|"Repository-scoped publication credentials"| Publisher
     Worker["Go worker process"] <-->|"Claim, renew, and report"| TaskAPI
+    ReviewSpecialist["Code review specialist"] <-->|"Claim a head-bound review and return findings to Chief of Staff’s task"| TaskAPI
     Worker --> Runtime["Container runtime adapter"]
     Worker --> Codex["Codex App Server adapter"]
     Runtime --> Container["Disposable execution containers"]
@@ -171,3 +177,11 @@ The proposed official Slack connection separates workspace installation from
 linking the operator's private DM. The local service connects outbound to the
 relay and remains authoritative for tasks and approvals.
 [Official Slack Connect design](adr/0010-official-slack-connect.md)
+
+For projects with GitHub delivery enabled, Chief of Staff's target result is a
+pull request with verification and independent review on its current head.
+Chief of Staff assigns the code review specialist, receives findings on the
+original task, and coordinates fixes and re-review. The local web app and
+optional Slack DM expose the same conversation and task actions. Local-only
+projects and exceptions use the local review path.
+See [ADR 0014](adr/0014-chief-of-staff-pr-delivery.md).
