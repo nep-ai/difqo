@@ -247,10 +247,12 @@ write_agent "$server_label" /bin/bash "$bin/service-macos" run
 if [ "$mode" = managed ]; then
   write_agent "$database_label" "$postgres" -D "$database/data"
 fi
-if [ "$action" = restart ] || "$paused"; then stop_jobs "$mode"; fi
 if "$paused"; then
   resuming=true
   mark_pause pending
+fi
+if [ "$action" = restart ] || "$paused"; then stop_jobs "$mode"; fi
+if "$paused"; then
   if [ "$mode" = managed ]; then launchctl enable "$domain/$database_label"; fi
   launchctl enable "$domain/$server_label"
 fi

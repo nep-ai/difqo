@@ -44,6 +44,7 @@ case "$1" in
     rm -f "$FIXTURE/${2##*/}.disabled"
     ;;
   bootout)
+    [ "${FAIL_BOOTOUT:-}" != "${2##*/}" ]
     printf '%s\n' "${2##*/}" >> "$FIXTURE/stops"
     rm "$FIXTURE/${2##*/}"
     ;;
@@ -166,6 +167,12 @@ printf '%s\n' "$1" >> "$FIXTURE/cli"
     run(env, adapter, 'run')
     run(env, adapter, 'pause', ok=False, FAIL_DISABLE='1')
     assert 'Pause is incomplete' in run(env, adapter, 'status', ok=False)
+    run(env, adapter, 'start', ok=False, FAIL_BOOTOUT='com.difqo.postgresql')
+    assert 'Pause is incomplete' in run(env, adapter, 'status', ok=False)
+    assert not (work / 'com.difqo.server').exists()
+    assert (work / 'com.difqo.postgresql').is_file()
+    assert (work / 'com.difqo.server.disabled').is_file()
+    assert (work / 'com.difqo.postgresql.disabled').is_file()
     assert 'paused' in run(env, adapter, 'pause')
     assert 'Paused' in run(env, adapter, 'status', ok=False)
     assert (work / 'com.difqo.server.disabled').is_file()
