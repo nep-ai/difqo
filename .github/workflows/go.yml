@@ -48,6 +48,17 @@ jobs:
       - run: go build -o bin/difqo ./cmd/difqo
       - run: go build -o bin/connections ./cmd/connections
 
+      - name: Verify database setup and migration recovery
+        env:
+          POSTGRES_CONTAINER: ${{ job.services.postgres.id }}
+          POSTGRES_PORT: ${{ job.services.postgres.ports['5432'] }}
+        run: |
+          docker exec "$POSTGRES_CONTAINER" createdb -U postgres difqo_fresh
+          docker exec "$POSTGRES_CONTAINER" createdb -U postgres difqo_legacy
+          export DIFQO_FRESH_DATABASE_URL="postgres://postgres:smoke-test@127.0.0.1:${POSTGRES_PORT}/difqo_fresh?sslmode=disable"
+          export DIFQO_LEGACY_DATABASE_URL="postgres://postgres:smoke-test@127.0.0.1:${POSTGRES_PORT}/difqo_legacy?sslmode=disable"
+          python3 scripts/database-setup-smoke.py bin/difqo migrations
+
       - name: Test Slack relay pairing and local delivery
         env:
           POSTGRES_CONTAINER: ${{ job.services.postgres.id }}

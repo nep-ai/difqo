@@ -5,6 +5,8 @@
 ```mermaid
 flowchart LR
     Operator["Local operator"] --> Browser["Chief of Staff web app"]
+    Operator -->|"Prepare an existing database before starting Difqo"| Setup["Portable database setup CLI"]
+    Setup -->|"Apply bundle migrations and record checksums atomically"| Postgres
     Operator -->|"Poll an enrolled repository"| GitHubIntake["Local GitHub intake command"]
     GitHubIntake -->|"Read installation scope and conversation comments"| GitHub["GitHub API"]
     GitHubIntake -->|"Save linked identity, source, cursor, and task"| Postgres
@@ -69,6 +71,12 @@ messages to the same local binding used by the offline harness. Accepted
 goals commit before acknowledgement. The official app remains the planned
 default through a relay that can reuse the local intake rules. See
 [ADR 0009](adr/0009-local-slack-intake.md).
+
+The installed CLI verifies connectivity to the operator-selected PostgreSQL
+database and applies the bundled migrations and their history in one
+transaction. Platform setup will provision a per-user database and supply its
+connection string to the same CLI. See
+[ADR 0011](adr/0011-portable-database-setup.md).
 
 ## Chief of Staff web app
 

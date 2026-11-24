@@ -48,15 +48,51 @@ existing settings, data, and versions in place.
 
 The next installer slices are reviewed separately:
 
-1. **CLI setup and PostgreSQL.** Settle the supported local database default
-   and explicit DSN path. Implement readiness checks and repeatable migrations
-   with recovery from failure against a disposable database.
+1. **Platform PostgreSQL provisioning.** Review and implement the proposed
+   per-user PostgreSQL 18 cluster for clean machines. The portable
+   `setup-database` command below already handles a supplied database.
 2. **Per-user service.** Register a LaunchAgent for the configured server,
    wait for loopback health, and open the UI. Verify restart, rerun,
    update, and uninstall behavior while preserving data.
 3. **Release and onboarding.** Pin the reviewed version and trusted manifest
    in the download bootstrap. Exercise the first local goal on a clean Apple
    silicon Mac before publishing the bootstrap command.
+
+## Prepare PostgreSQL from an installed release
+
+Create a dedicated PostgreSQL database for Difqo and set
+`DIFQO_DATABASE_URL` to its connection string. The role must have permission
+to create and migrate objects in the database's `public` schema. Stop
+Difqo servers and workers before upgrading a database.
+
+From the extracted or installed release directory:
+
+```sh
+./bin/difqo setup-database
+./bin/difqo server -web web
+```
+
+The setup command uses migrations relative to the executable, including when
+run from another directory. Native Windows builds use `bin/difqo.exe` with the
+same flags. A source build can specify `-migrations PATH` for another trusted
+migration directory. Setup reports connection failures, applies pending
+migrations as a single transaction, and skips migrations already recorded
+with the matching checksum. The same setup invocation can be retried after
+a failure.
+
+For a database previously migrated using `psql`, back it up and confirm the
+last migration applied successfully. Supply that exact filename as
+`-baseline`. For example, use the following only if `0004_patch_review.sql`
+and all earlier migrations already completed:
+
+```sh
+./bin/difqo setup-database -baseline 0004_patch_review.sql
+```
+
+Setup records the operator-confirmed prefix and applies the remaining
+migrations. Use trusted SQL from the corresponding Difqo releases.
+See [ADR 0011](adr/0011-portable-database-setup.md) for the proposed default
+database on a clean machine and the provisioning boundary.
 
 ## Start from a source checkout
 
