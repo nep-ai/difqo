@@ -194,12 +194,16 @@ PGDATABASE="$DIFQO_RELAY_DATABASE_URL" psql -X -v ON_ERROR_STOP=1 \
   -f relay/operations/retire-slack-pilot.sql
 ```
 
-Verify the targeted scope has no claimed pairings, OAuth flows, or queued
-bodies, and that replay IDs remain. Keep ingress paused until the restored
-binary is compatible with the current schema and passes health checks.
-Keep the tombstones in the current database. Restoring a pre-retirement
-backup could reactivate claims. Resuming the pilot requires fresh pairing.
-Local tasks that already committed remain in local Difqo.
+If a database restore is required, keep ingress paused and Connections
+stopped. Run `relay/operations/retire-slack-pilot.sql` again against the
+restored database using the same app and pilot scope. A pre-retirement backup
+can contain active claims and queued bodies.
+
+Verify the active database has no claimed pairings, OAuth flows, or queued
+bodies in the retired scope, and that its replay IDs remain. Keep ingress
+paused until the binary is compatible with that schema and passes health
+checks. Resuming the pilot requires fresh pairing. Local tasks that already
+committed remain in local Difqo.
 
 ### Rehearsal
 
