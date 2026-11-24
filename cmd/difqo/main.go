@@ -33,9 +33,12 @@ func main() {
 }
 
 func run(args []string) error {
-	const usage = "usage: difqo server | difqo worker -repo PATH | difqo github-intake -help | difqo slack-import -help | difqo slack-socket -help"
+	const usage = "usage: difqo setup-database | difqo server | difqo worker -repo PATH | difqo github-intake -help | difqo slack-import -help | difqo slack-socket -help"
 	if len(args) == 0 {
 		return errors.New(usage)
+	}
+	if args[0] == "setup-database" {
+		return runDatabaseSetup(args[1:])
 	}
 	if args[0] == "github-intake" {
 		return runGitHubIntake(args[1:])
