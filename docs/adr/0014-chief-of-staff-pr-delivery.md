@@ -100,13 +100,17 @@ permissions can be granted separately. [GitHub PR creation][github-pr]
 | --- | --- |
 | Resolve and verify | Match the operator's request to one authorized project. Record a check against the exact candidate commit. On failure, surface the reason and keep the local result. |
 | Publish a draft | Persist a publication record before writing to GitHub. Use a task-owned branch and reconcile by repository, head and base after a restart or lost response. Adopt an existing PR only when it matches that record. Recheck authorization before writes. |
-| Review the draft | Run a separate code-review attempt on the published head with the project decision, diff, and verification evidence. Record actionable findings and the outcome in Difqo, and publish findings to the PR where authorized. |
+| Review the draft | Chief of Staff assigns its code review specialist to the published head with the project decision, diff, and verification evidence. The specialist runs an independent attempt and reports actionable findings and the outcome to the same task. Publish findings to the PR where authorized. |
 | Mark ready | Wait for a passing check and a completed review without blockers for the current head. A new head requires fresh evidence. Recheck the head around the ready transition and reconcile races with GitHub. GitHub branch protection governs merging. |
 | Report the result | Give the operator the same PR URL and check and review state in either connected surface. A blocked review or unavailable publisher gives the operator a specific next action. |
 
-An existing PR can also be reviewed on request through the same review path.
-The code review agent's result is evidence for Difqo's own workflow and
-respects repository-required approvals. Merging remains a distinct action.
+The same Chief of Staff that took the goal in the web app or Slack
+manages the code review specialist. It delegates review, coordinates a fix
+or escalates a blocker, and requests a fresh check and review after changes.
+The operator continues in the same conversation. The specialist's review
+is independent of the authoring attempt and respects repository-required
+approvals. An existing PR can also be reviewed on request through the same
+path. Merging remains a distinct action.
 
 Local-only projects and configured exceptions use the existing
 [local review and approval path][local-review]. Missing or revoked GitHub
@@ -144,10 +148,11 @@ compatible.
    verify one branch and one draft PR. Prove zero writes for revoked
    credentials and mismatched repositories. Track under [#53][delivery],
    with installation and scoping under [#12][github-intake].
-4. Run independent review and enforce the current-head check and review
-   gate. Verify one clean result and one blocker followed by a new head.
-   Verify both surfaces report the same states and links. Track under
-   [#21][review].
+4. Have Chief of Staff assign the code review specialist and enforce the
+   current-head check and review gate. Verify one clean result and one
+   blocker that Chief of Staff routes for a fix and then reassigns for
+   review at the new head. Verify both surfaces report the same task,
+   states, and links. Track under [#21][review].
 5. Run a live acceptance exercise with an explicitly enrolled test
    repository and linked Slack DM. Start in one surface and answer a
    clarification in the other. Verify the saved decision affected the

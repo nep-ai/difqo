@@ -142,7 +142,7 @@ flowchart LR
 
     subgraph Server["Go server process"]
         Intake["Shared task intake"] --> CoS["Chief of Staff"]
-        CoS --> Policy["Policy, approvals, and tool gateway"]
+        CoS -->|"Delegate work and review"| Policy["Policy, approvals, and tool gateway"]
         Policy --> TaskAPI["Task API and scheduler"]
         Policy --> Publisher["Project-scoped PR publisher"]
     end
@@ -154,7 +154,7 @@ flowchart LR
     Official -->|"Repository-scoped publication credentials"| Publisher
     Private -->|"Repository-scoped publication credentials"| Publisher
     Worker["Go worker process"] <-->|"Claim, renew, and report"| TaskAPI
-    ReviewAgent["Code review agent"] <-->|"Claim a head-bound review and report findings"| TaskAPI
+    ReviewSpecialist["Code review specialist"] <-->|"Claim a head-bound review and return findings to Chief of Staff’s task"| TaskAPI
     Worker --> Runtime["Container runtime adapter"]
     Worker --> Codex["Codex App Server adapter"]
     Runtime --> Container["Disposable execution containers"]
@@ -179,7 +179,9 @@ relay and remains authoritative for tasks and approvals.
 [Official Slack Connect design](adr/0010-official-slack-connect.md)
 
 For projects with GitHub delivery enabled, Chief of Staff's target result is a
-pull request with verification and independent agent review on its current
-head. The local web app and optional Slack DM expose the same conversation and
-task actions. Local-only projects and exceptions use the local review path.
+pull request with verification and independent review on its current head.
+Chief of Staff assigns the code review specialist, receives findings on the
+original task, and coordinates fixes and re-review. The local web app and
+optional Slack DM expose the same conversation and task actions. Local-only
+projects and exceptions use the local review path.
 See [ADR 0014](adr/0014-chief-of-staff-pr-delivery.md).
