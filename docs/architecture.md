@@ -7,6 +7,9 @@ flowchart LR
     Operator["Local operator"] --> Browser["Chief of Staff web app"]
     Operator -->|"Prepare an existing database before starting Difqo"| Setup["Portable database setup CLI"]
     Setup -->|"Apply bundle migrations and record checksums atomically"| Postgres
+    Operator -->|"Optionally provision on Apple silicon"| Provision["macOS PostgreSQL adapter"]
+    Provision -->|"Initialize private loopback cluster"| Postgres
+    Provision -->|"Run the same migration command"| Setup
     Operator -->|"Poll an enrolled repository"| GitHubIntake["Local GitHub intake command"]
     GitHubIntake -->|"Read installation scope and conversation comments"| GitHub["GitHub API"]
     GitHubIntake -->|"Save linked identity, source, cursor, and task"| Postgres
@@ -74,8 +77,9 @@ default through a relay that can reuse the local intake rules. See
 
 The installed CLI verifies connectivity to the operator-selected PostgreSQL
 database and applies the bundled migrations and their history in one
-transaction. Platform setup will provision a per-user database and supply its
-connection string to the same CLI. See
+transaction. On Apple silicon, the release adapter uses an operator-supplied
+PostgreSQL 18 binary directory to provision a private loopback cluster and
+calls the same CLI to set up the database. See
 [ADR 0011](adr/0011-portable-database-setup.md).
 
 ## Chief of Staff web app

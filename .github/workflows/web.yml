@@ -63,6 +63,8 @@ jobs:
           tar -xzf difqo-v0.0.0-ci-darwin-arm64.tar.gz -C extracted
           file extracted/bin/difqo | cut -d: -f2- | grep -E 'Mach-O .*arm64'
           test -x extracted/bin/difqo
+          test -x extracted/bin/provision-postgres-macos
+          cmp "$GITHUB_WORKSPACE/scripts/provision-postgres-macos.sh" extracted/bin/provision-postgres-macos
           test -f extracted/web/index.html
           diff -r "$GITHUB_WORKSPACE/web/dist" extracted/web
           for migration in "$GITHUB_WORKSPACE"/migrations/*.sql; do
