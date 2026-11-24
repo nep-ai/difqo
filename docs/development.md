@@ -493,7 +493,12 @@ retry, pause, cancellation, and other execution profiles are later work.
 
 ## Local GitHub comment intake
 
-The one-shot poller accepts a short-lived installation token in
+For the official single-repository pilot, follow the
+[Connections runbook](github-pilot.md). The local command fetches a fresh
+repository-scoped installation token from its configured HTTPS endpoint.
+Connections also supplies the enrolled repository and linked owner identity.
+
+For manual and private-app development, the same poller accepts a short-lived installation token in
 `DIFQO_GITHUB_TOKEN`. Supply a token scoped to the enrolled repository with
 read permissions for issues and pull requests. Configure the repository's
 numeric ID and the numeric GitHub user ID of the local owner. Only that
@@ -514,9 +519,9 @@ GitHub requests and reports expired or revoked access as a reconnect error.
 
 Poll frequently enough to stay within one page of comments. If GitHub returns
 more than 100 comments for the cursor window, the poll fails and preserves its
-cursor. This slice accepts a pre-issued token. Official app installation,
-account linking, hosted token issuance, local private-app token minting, and
-approved GitHub replies are future work. See the
+cursor. The pilot uses an operator-managed enrollment. Self-serve account
+linking, local private-app token minting, and approved GitHub replies are
+future work. See the
 [GitHub intake ADR](adr/0007-github-intake.md).
 
 Run the synthetic HTTP and PostgreSQL checks without GitHub credentials.

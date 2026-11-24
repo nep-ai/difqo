@@ -15,6 +15,8 @@ flowchart LR
     Provision -->|"Initialize private loopback cluster"| Postgres
     Provision -->|"Run the same migration command"| Setup
     Operator -->|"Poll an enrolled repository"| GitHubIntake["Local GitHub intake command"]
+    GitHubIntake -->|"Request the pilot's read-only repository token over HTTPS"| GitHubBroker["GitHub provider in Connections"]
+    GitHubBroker -->|"Mint a scoped token and verify owner access"| GitHub
     GitHubIntake -->|"Read installation scope and conversation comments"| GitHub["GitHub API"]
     GitHubIntake -->|"Save linked identity, source, cursor, and task"| Postgres
     Operator -->|"Supply an offline normalized DM event"| SlackImport["Local Slack intake harness"]
@@ -67,11 +69,13 @@ in a trusted local development environment. PostgreSQL stores the revision check
 output directly. The development workflow and API examples are in the [local
 setup guide](development.md).
 
-The GitHub intake command uses a pre-issued installation token scoped to a
-repository and accepts task requests from the locally configured GitHub user.
+The official GitHub intake pilot requests a scoped installation token from
+Connections and polls GitHub directly. Connections checks the configured
+operator's current repository access before releasing the token. Manual
+intake can also use a pre-issued installation token.
 Imported tasks use the same decision and patch-review flow as local goals.
 Workers opt into that repository's queue by numeric ID. See
-[ADR 0007](adr/0007-github-intake.md).
+[ADR 0007](adr/0007-github-intake.md) and [ADR 0015](adr/0015-official-github-pilot.md).
 
 Private Slack app intake connects outbound over Socket Mode and maps direct
 messages to the same local binding used by the offline harness. Accepted
