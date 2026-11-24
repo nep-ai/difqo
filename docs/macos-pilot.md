@@ -13,21 +13,39 @@ Actions run, installs a versioned release for the current user, prepares
 PostgreSQL, starts the per-user services, and opens
 `http://127.0.0.1:8765` after it is ready. Use `DIFQO_PILOT_NO_OPEN=1` to keep
 the browser closed. To use an existing dedicated PostgreSQL database,
-set `DIFQO_DATABASE_URL` before the first run. Subsequent invocations reuse
-the saved database. Use the same artifact when testing a rerun.
+export its connection URL before the first run:
+
+```sh
+export DIFQO_DATABASE_URL='postgres://USER@HOST:5432/difqo'
+/bin/bash ./start-pilot.sh
+```
+
+Subsequent invocations reuse the saved database. Use the same artifact when
+testing a rerun.
 
 ## Verify the first patch
 
 The installer reaches the UI independently of container tools. For a Codex
-goal, start a supported Docker or Podman engine, make Git available, and use
-a dedicated Codex sign-in. The steps below show Docker. Use a disposable
-repository and material that is safe to send to the model.
+goal, start Docker Desktop, make Git available, and use a dedicated Codex
+sign-in. Use a disposable repository and material that is safe to send to
+the model.
+
+The LaunchAgent must be able to find the same Docker engine and image for
+**Rerun check**. Use Docker's default configuration under your home directory.
+If you use a named context, select it with `docker context use NAME` before
+building the image. Shell-only `DOCKER_CONTEXT`, `DOCKER_HOST`, and
+`DOCKER_CONFIG` overrides do not reach the LaunchAgent. Build, sign in, and
+run the worker against the same engine and context.
 
 Docker's stock policy can block the nested namespaces required by the Codex
 sandbox. The worker checks sandbox readiness before claiming the goal. If
-preflight fails, use a compatible runtime or an administrator-approved policy
-scoped to the Codex container. See the [runtime and sandbox setup guide](https://github.com/nep-ai/difqo/blob/main/docs/development.md#runtime-selection-and-linux-sandbox-setup)
-before retrying. The queued goal will still be there.
+preflight fails, see the [runtime and sandbox setup guide](https://github.com/nep-ai/difqo/blob/main/docs/development.md#runtime-selection-and-linux-sandbox-setup)
+for an administrator-approved policy scoped to the Codex container. If you
+use a trusted wrapper for that policy, it must forward to the same engine
+that the LaunchAgent can discover through Docker. The queued goal will still
+be there. If you intentionally switch to supported Podman, repeat the image
+build and device sign-in on that engine using the linked guide. The
+LaunchAgent must be able to discover that Podman connection by default.
 
 Run these commands from the same artifact directory:
 
@@ -55,7 +73,7 @@ greeting.txt.` Submit the goal `Replace the fixture greeting according to the
 saved decision.` Then run the worker:
 
 ```sh
-runtime=docker  # Use the trusted compatible CLI or wrapper selected above.
+runtime=docker  # Or the trusted wrapper for this same Docker engine.
 "$release/bin/difqo" worker -repo "$fixture" -container-runtime "$runtime" \
   -codex-image difqo-codex:0.171.0 -codex-home "$auth_home" \
   -artifacts "$root/artifacts" -check 'test "$(cat greeting.txt)" = after'
@@ -76,8 +94,16 @@ still reads `before`.
 ```
 
 Verify the approved task survives restart. To test persistence across login,
-log out and log back in. To leave the pilot inactive afterward, use
-`"$release/bin/service-macos" pause`. Pause preserves the database and settings.
+log out and log back in. To leave the pilot inactive afterward, open Terminal
+in the extracted artifact folder again and run:
+
+```sh
+root="$HOME/Library/Application Support/Difqo"
+release="$root/releases/difqo-$(cat VERSION)-darwin-arm64"
+"$release/bin/service-macos" pause
+```
+
+Pause preserves the database and settings.
 The `REVISION` file identifies the CI build. Capture the version, build
 revision, whether the services recovered, and any failure before sharing
 results. Logs are under `$root/service`. Use synthetic or redacted evidence.
