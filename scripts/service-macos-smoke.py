@@ -34,6 +34,7 @@ case "$1" in
     [ ! -e "$FIXTURE/$label.disabled" ]
     printf '%s\n' "$label" >> "$FIXTURE/starts"
     touch "$FIXTURE/$label"
+    if [ "${CANCEL_BOOTSTRAP:-}" = "$label" ]; then kill -TERM "$PPID"; fi
     ;;
   disable)
     [ "${FAIL_DISABLE:-}" != 1 ]
@@ -169,6 +170,13 @@ printf '%s\n' "$1" >> "$FIXTURE/cli"
     assert 'Paused' in run(env, adapter, 'status', ok=False)
     assert (work / 'com.difqo.server.disabled').is_file()
     assert (work / 'com.difqo.postgresql.disabled').is_file()
+    for label in ('com.difqo.postgresql', 'com.difqo.server'):
+        run(env, adapter, 'start', ok=False, CANCEL_BOOTSTRAP=label)
+        assert 'Paused' in run(env, adapter, 'status', ok=False)
+        assert not (work / 'com.difqo.postgresql').exists()
+        assert not (work / 'com.difqo.server').exists()
+        assert (work / 'com.difqo.postgresql.disabled').is_file()
+        assert (work / 'com.difqo.server.disabled').is_file()
     assert 'running' in run(env, adapter, 'restart')
     assert 'running' in run(env, adapter, 'status')
     assert not list(work.glob('*.disabled'))

@@ -114,8 +114,8 @@ wrote_database=false
 cleanup() {
   local result=$?
   if [ "$result" -ne 0 ]; then
-    if "$started_server"; then launchctl bootout "$domain/$server_label" || true; fi
-    if "$started_database"; then launchctl bootout "$domain/$database_label" || true; fi
+    if "$started_server" && loaded "$server_label"; then launchctl bootout "$domain/$server_label" || true; fi
+    if "$started_database" && loaded "$database_label"; then launchctl bootout "$domain/$database_label" || true; fi
     if "$wrote_server"; then rm -f "$agents/$server_label.plist"; fi
     if "$wrote_database"; then rm -f "$agents/$database_label.plist"; fi
     if "$resuming" && disable_jobs && ! loaded "$server_label" && ! loaded "$database_label"; then
@@ -255,12 +255,12 @@ if "$paused"; then
   launchctl enable "$domain/$server_label"
 fi
 if [ "$mode" = managed ] && ! loaded "$database_label"; then
-  launchctl bootstrap "$domain" "$agents/$database_label.plist"
   started_database=true
+  launchctl bootstrap "$domain" "$agents/$database_label.plist"
 fi
 if ! loaded "$server_label"; then
-  launchctl bootstrap "$domain" "$agents/$server_label.plist"
   started_server=true
+  launchctl bootstrap "$domain" "$agents/$server_label.plist"
 fi
 
 for ((attempt=0; attempt<40; attempt++)); do
