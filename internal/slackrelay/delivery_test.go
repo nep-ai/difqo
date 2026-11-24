@@ -48,6 +48,10 @@ func TestOfficialSlackDelivery(t *testing.T) {
 	firstClaim, firstDelete := true, true
 	var mu sync.Mutex
 	var pollUnavailable atomic.Bool
+	var countLateReceipts atomic.Bool
+	var lateReceipts atomic.Int32
+	var lateResponse sync.Once
+	lateWritten := make(chan error, 1)
 	f.wrapRelay = func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			mu.Lock()
@@ -71,6 +75,9 @@ func TestOfficialSlackDelivery(t *testing.T) {
 			}
 			mu.Unlock()
 
+			if countLateReceipts.Load() && r.Method == http.MethodPut && strings.HasSuffix(r.URL.Path, "/events/"+late.EventID) {
+				lateReceipts.Add(1)
+			}
 			if r.Method == http.MethodPut && strings.HasSuffix(r.URL.Path, "/events/"+event.EventID) {
 				var count int
 				if err := db.QueryRowContext(r.Context(), `
@@ -91,13 +98,17 @@ func TestOfficialSlackDelivery(t *testing.T) {
 				}
 				reply := httptest.NewRecorder()
 				next.ServeHTTP(reply, r)
-				if strings.Contains(reply.Body.String(), late.EventID) {
-					close(lateRead)
+				hasLate := strings.Contains(reply.Body.String(), late.EventID)
+				if hasLate {
+					lateResponse.Do(func() { close(lateRead) })
 					<-releaseRead
 				}
 				w.Header().Set("Content-Type", "application/json")
 				w.WriteHeader(reply.Code)
-				w.Write(reply.Body.Bytes())
+				_, err := w.Write(reply.Body.Bytes())
+				if hasLate {
+					lateWritten <- errors.Join(err, r.Context().Err())
+				}
 				return
 			}
 			next.ServeHTTP(w, r)
@@ -114,9 +125,19 @@ func TestOfficialSlackDelivery(t *testing.T) {
 		t.Fatal(err)
 	}
 	f.id = view.PairingID
+	// Simulate a pairing persisted in a non-UTC zone by an older server.
+	if _, err := tasks.UpdateSlackConnection(ctx, func(s *store.SlackConnection) error {
+		s.Pairing.Expires = s.Pairing.Expires.In(time.FixedZone("fixture", 5*3600+45*60))
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
 	state, err := tasks.SlackConnection(ctx)
 	if err != nil {
 		t.Fatal(err)
+	}
+	if state.Pairing.Expires.Location() != time.UTC {
+		t.Fatal("stored pairing expiry was not normalized to UTC")
 	}
 	f.proof = state.Pairing.Proof
 	binding := f.prepareBinding()
@@ -172,20 +193,41 @@ func TestOfficialSlackDelivery(t *testing.T) {
 	f.wrapRelay = wrap
 	f.restart()
 	f.webhook(late, http.StatusOK)
+	countLateReceipts.Store(true)
 	stopLate := runDelivery(ctx, connections)
 	defer stopLate()
 	var release sync.Once
 	defer release.Do(func() { close(releaseRead) })
-	awaitDelivery(t, lateRead)
-	if v, err := connections.Disconnect(ctx, view.Generation, f.id); !errors.Is(err, slackintake.ErrRelayUnavailable) || v.State != "disconnecting" {
+	// Complete the request well within the connector's five-second timeout.
+	// The next disconnect retry can run only after this poll returns.
+	raceCtx, cancelRace := context.WithTimeout(ctx, 2*time.Second)
+	defer cancelRace()
+	select {
+	case <-lateRead:
+	case <-raceCtx.Done():
+		t.Fatal("stale poll did not reach the relay in time")
+	}
+	if v, err := connections.Disconnect(raceCtx, view.Generation, f.id); !errors.Is(err, slackintake.ErrRelayUnavailable) || v.State != "disconnecting" {
 		t.Fatalf("relay outage during disconnect: state=%q err=%v", v.State, err)
 	}
 	release.Do(func() { close(releaseRead) })
+	select {
+	case err := <-lateWritten:
+		if err != nil {
+			t.Fatalf("stale poll did not get a live relay response: %v", err)
+		}
+	case <-raceCtx.Done():
+		t.Fatal("stale response was not written in time")
+	}
 	waitDelivery(t, func() bool {
 		v, err := connections.Status(ctx)
 		return err == nil && v.State == "disconnected"
 	})
 	stopLate()
+	if got := lateReceipts.Load(); got != 0 {
+		t.Fatalf("connector attempted %d receipts for the stale event", got)
+	}
+	countLateReceipts.Store(false)
 	f.request("GET", path, f.proof, nil, http.StatusConflict, nil)
 	f.request("PUT", path+"/"+late.EventID, f.proof, nil, http.StatusConflict, nil)
 	if f.queueCount(f.id) != 0 {

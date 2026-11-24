@@ -98,7 +98,7 @@ func (c *Connections) Begin(ctx context.Context) (ConnectionView, error) {
 		}
 		s.Mode = "disconnected"
 		s.Pairing = &store.SlackPairing{ID: hex.EncodeToString(id[:]), Proof: hex.EncodeToString(proof[:]),
-			Relay: c.origin, State: "connecting", Expires: time.Now().Add(15 * time.Minute)}
+			Relay: c.origin, State: "connecting", Expires: time.Now().UTC().Add(15 * time.Minute)}
 		return nil
 	})
 	return connectionView(s), err

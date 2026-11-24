@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io/fs"
 	"log"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -179,11 +180,15 @@ func run(args []string) error {
 		ReadTimeout:       10 * time.Second,
 		WriteTimeout:      15 * time.Second,
 	}
+	listener, err := net.Listen("tcp", address)
+	if err != nil {
+		return err
+	}
 	if slack != nil {
 		slackCtx, stopSlack := context.WithCancel(context.Background())
 		defer stopSlack()
 		go slack.Run(slackCtx)
 	}
 	log.Printf("Difqo API listening on http://%s", address)
-	return server.ListenAndServe()
+	return server.Serve(listener)
 }

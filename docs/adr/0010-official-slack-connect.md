@@ -191,7 +191,10 @@ Confirmation persists an intent before claiming the exact binding. An
 interrupted claim retries with the same pairing proof. Disconnect retires
 the local generation first and persists the pending relay revocation until
 the relay acknowledges it. A pending disconnect blocks new pairing so a
-relay outage cannot orphan an active route.
+relay outage cannot orphan an active route. If the fixture restarts at a
+different address during either operation, restart the relay with its original
+loopback address and database, then let the local server retry. The pairing
+proof is scoped to that saved origin.
 
 The relay uses the pairing proof for `GET /pairings/{id}/events` and
 `PUT /pairings/{id}/events/{event_id}`. A poll returns the active binding and

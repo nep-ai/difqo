@@ -55,6 +55,10 @@ func readSlackConnection(ctx context.Context, db slackQuerier, lock bool) (Slack
 		if err := json.Unmarshal(pairing, &state.Pairing); err != nil {
 			return state, err
 		}
+		if state.Pairing != nil {
+			// Pairing snapshots are compared across separate database reads.
+			state.Pairing.Expires = state.Pairing.Expires.UTC()
+		}
 	}
 	var private SlackBinding
 	err := db.QueryRowContext(ctx, slackBindingQuery).
