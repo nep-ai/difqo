@@ -30,6 +30,8 @@ jobs:
     name: macOS release package
     runs-on: macos-15
     timeout-minutes: 30
+    env:
+      PILOT_VERSION: v0.1.0-pilot.${{ github.run_id }}.${{ github.run_attempt }}
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
@@ -53,23 +55,24 @@ jobs:
       - name: Verify the Apple silicon bundle
         run: |
           build_dir=$(mktemp -d "$RUNNER_TEMP/difqo-build.XXXXXX")
-          bash scripts/package-macos.sh v0.0.0-ci "$build_dir" "$RUNNER_TEMP/postgres-runtime" > "$build_dir/first.log" 2>&1 &
+          bash scripts/package-macos.sh "$PILOT_VERSION" "$build_dir" "$RUNNER_TEMP/postgres-runtime" > "$build_dir/first.log" 2>&1 &
           first=$!
-          bash scripts/package-macos.sh v0.0.0-ci "$build_dir" "$RUNNER_TEMP/postgres-runtime" > "$build_dir/second.log" 2>&1 &
+          bash scripts/package-macos.sh "$PILOT_VERSION" "$build_dir" "$RUNNER_TEMP/postgres-runtime" > "$build_dir/second.log" 2>&1 &
           second=$!
           successes=0
           if wait "$first"; then successes=$((successes + 1)); fi
           if wait "$second"; then successes=$((successes + 1)); fi
           cat "$build_dir/first.log" "$build_dir/second.log"
           test "$successes" -eq 1
-          bundle="$build_dir/difqo-v0.0.0-ci-darwin-arm64"
+          bundle="$build_dir/difqo-$PILOT_VERSION-darwin-arm64"
           cd "$bundle"
           test ! -e release
           shasum -a 256 -c SHA256SUMS
           mkdir extracted
-          tar -xzf difqo-v0.0.0-ci-darwin-arm64.tar.gz -C extracted
+          tar -xzf "difqo-$PILOT_VERSION-darwin-arm64.tar.gz" -C extracted
           file extracted/bin/difqo | cut -d: -f2- | grep -E 'Mach-O .*arm64'
           test -x extracted/bin/difqo
+          cmp "$GITHUB_WORKSPACE/containers/codex/Dockerfile" extracted/containers/codex/Dockerfile
           test -x extracted/bin/service-macos
           python3 "$GITHUB_WORKSPACE/scripts/service-macos-smoke.py" "$PWD/extracted/bin/service-macos"
           test -x extracted/bin/provision-postgres-macos
@@ -82,9 +85,39 @@ jobs:
           for migration in "$GITHUB_WORKSPACE"/migrations/*.sql; do
             cmp "$migration" "extracted/migrations/$(basename "$migration")"
           done
-          test "$(cat extracted/VERSION)" = v0.0.0-ci
-          PATH=/usr/bin:/bin:/usr/sbin:/sbin /bin/bash "$GITHUB_WORKSPACE/scripts/install-macos-smoke.sh" v0.0.0-ci "$bundle" --provision
+          test "$(cat extracted/VERSION)" = "$PILOT_VERSION"
+          PATH=/usr/bin:/bin:/usr/sbin:/sbin /bin/bash "$GITHUB_WORKSPACE/scripts/install-macos-smoke.sh" "$PILOT_VERSION" "$bundle" --provision
           # Exercise the explicit path with no runtime beside the release CLI.
           supplied_runtime="$build_dir/supplied runtime"
           mv extracted/postgresql "$supplied_runtime"
           python3 "$GITHUB_WORKSPACE/scripts/provision-postgres-smoke.py" "$PWD/extracted" "$supplied_runtime/bin"
+          PATH=/usr/bin:/bin:/usr/sbin:/sbin /bin/bash "$GITHUB_WORKSPACE/scripts/install-macos-pilot-smoke.sh"
+
+          artifact="$RUNNER_TEMP/difqo-pilot"
+          mkdir "$artifact"
+          cp "difqo-$PILOT_VERSION-darwin-arm64.tar.gz" SHA256SUMS "$artifact/"
+          cp "$GITHUB_WORKSPACE/scripts/install-macos.sh" "$artifact/"
+          cp "$GITHUB_WORKSPACE/docs/macos-pilot.md" "$artifact/START-HERE.md"
+          printf '%s\n' "$PILOT_VERSION" > "$artifact/VERSION"
+          git -C "$GITHUB_WORKSPACE" rev-parse HEAD > "$artifact/REVISION"
+          cat > "$artifact/start-pilot.sh" <<'PILOT'
+          #!/bin/bash
+          set -euo pipefail
+          cd "$(dirname "$0")"
+          version=$(cat VERSION)
+          exec /bin/bash ./install-macos.sh "$version" "difqo-$version-darwin-arm64.tar.gz" ./SHA256SUMS --start
+          PILOT
+
+      - name: Exercise the live pilot when a graphical login is available
+        if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository
+        run: /bin/bash scripts/install-macos-live-smoke.sh "$RUNNER_TEMP/difqo-pilot" "$PILOT_VERSION"
+
+      - name: Upload the Apple silicon pilot candidate
+        if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: difqo-macos-arm64-pilot-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/difqo-pilot/
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 14

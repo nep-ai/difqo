@@ -7,8 +7,8 @@ fail() {
   exit 1
 }
 
-if [ "$#" -ne 3 ] || [[ ! "$1" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[A-Za-z0-9]+([.-][A-Za-z0-9]+)*)?$ ]]; then
-  printf 'Usage: bash scripts/install-macos.sh VERSION ARCHIVE TRUSTED_SHA256SUMS\n' >&2
+if [ "$#" -lt 3 ] || [ "$#" -gt 4 ] || { [ "$#" -eq 4 ] && [ "$4" != --start ]; } || [[ ! "$1" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[A-Za-z0-9]+([.-][A-Za-z0-9]+)*)?$ ]]; then
+  printf 'Usage: bash scripts/install-macos.sh VERSION ARCHIVE TRUSTED_SHA256SUMS [--start]\n' >&2
   exit 2
 fi
 
@@ -66,6 +66,12 @@ if ! COPYFILE_DISABLE=1 tar -xzf "$scratch/$archive" --no-same-owner --no-same-p
   fail 'Could not extract the verified archive.'
 fi
 validate_payload "$scratch/payload" || fail 'The verified archive does not contain the expected release payload.'
+if [ "${4:-}" = --start ]; then
+  [ -x "$scratch/payload/bin/service-macos" ] && [ -x "$scratch/payload/bin/provision-postgres-macos" ] ||
+    fail 'This archive does not contain the macOS pilot adapters.'
+  launchctl print "gui/$(id -u)" >/dev/null 2>&1 ||
+    fail 'Run the pilot from a logged-in macOS graphical session.'
+fi
 
 library="$HOME/Library"
 support="$library/Application Support"
@@ -81,6 +87,21 @@ for directory in "$library" "$support" "$root" "$releases"; do
   fi
 done
 
+start_pilot() {
+  if [ "${4:-}" != --start ]; then return; fi
+  # Service settings can exist after an interrupted start. Let the service
+  # adapter reconcile them instead of provisioning a different database.
+  local service="$root/service"
+  if [ -z "${DIFQO_DATABASE_URL:-}" ] && [ ! -e "$service/mode" ] && [ ! -L "$service/mode" ] &&
+     [ ! -e "$service/database-url" ] && [ ! -L "$service/database-url" ]; then
+    /bin/bash "$destination/bin/provision-postgres-macos"
+  fi
+  /bin/bash "$destination/bin/service-macos" start
+  if [ "${DIFQO_PILOT_NO_OPEN:-}" != 1 ]; then
+    open 'http://127.0.0.1:8765' || printf 'Open http://127.0.0.1:8765 in your browser.\n' >&2
+  fi
+}
+
 reservation="$releases/.$bundle.lock"
 if ! mkdir "$reservation"; then
   fail "Could not reserve $bundle. If no installer is running, check $reservation and remove the empty lock."
@@ -93,6 +114,7 @@ if [ -e "$destination" ] || [ -L "$destination" ]; then
     fail "Install path already exists with different contents: $destination"
   fi
   printf 'Difqo %s is already installed at %s\n' "$version" "$destination"
+  start_pilot "$@"
   exit 0
 fi
 
@@ -100,3 +122,4 @@ stage=$(mktemp -d "$releases/.difqo-install.XXXXXX")
 cp -R "$scratch/payload" "$stage/"
 mv "$stage/payload" "$destination"
 printf 'Installed Difqo %s at %s\n' "$version" "$destination"
+start_pilot "$@"

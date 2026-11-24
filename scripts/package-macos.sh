@@ -52,7 +52,7 @@ if [ -e "$output/$bundle" ] || [ -L "$output/$bundle" ]; then
 fi
 
 stage=$(mktemp -d "$output/.difqo-package.XXXXXX")
-mkdir -p "$stage/payload/bin" "$stage/payload/web" "$stage/payload/migrations" "$stage/release"
+mkdir -p "$stage/payload/bin" "$stage/payload/web" "$stage/payload/migrations" "$stage/payload/containers/codex" "$stage/release"
 
 CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 go build -trimpath -o "$stage/payload/bin/difqo" ./cmd/difqo
 cp scripts/provision-postgres-macos.sh "$stage/payload/bin/provision-postgres-macos"
@@ -61,11 +61,12 @@ chmod 755 "$stage/payload/bin/provision-postgres-macos" "$stage/payload/bin/serv
 cp -R web/dist/. "$stage/payload/web/"
 cp migrations/*.sql "$stage/payload/migrations/"
 cp LICENSE "$stage/payload/"
+cp containers/codex/Dockerfile "$stage/payload/containers/codex/"
 printf '%s\n' "$version" > "$stage/payload/VERSION"
 
 (
   cd "$stage/release"
-  entries=(bin web migrations LICENSE VERSION)
+  entries=(bin web migrations containers LICENSE VERSION)
   if [ -n "$runtime" ]; then
     cp -R "$runtime" "$stage/payload/postgresql"
     entries+=(postgresql)

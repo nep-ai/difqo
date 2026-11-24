@@ -24,6 +24,14 @@ upstream source archive and supplies its staging directory as the third
 argument to `package-macos.sh`. This adds `postgresql/` to the same verified
 release archive. See [ADR 0012](adr/0012-postgresql-runtime-source.md).
 
+## Run the Apple silicon pilot
+
+Use the pilot artifact from a reviewed macOS package check. Its
+`START-HERE.md` contains the [pilot instructions](macos-pilot.md), including
+the first verified goal and service lifecycle checks. The archive and
+manifest are versioned per CI run. The public install endpoint stays gated
+on the clean-machine acceptance in issue #42.
+
 ## Verify the installer bootstrap
 
 The bootstrap stages a pinned, locally supplied release for the current user.
