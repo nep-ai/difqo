@@ -19,6 +19,45 @@ database, set `DIFQO_DATABASE_URL` and run `bin/difqo server -web web` from
 the extracted directory. The bundle does not initialize a database or register
 a background service. CI builds and inspects the bundle without publishing.
 
+## Verify the installer bootstrap
+
+The bootstrap stages a pinned, locally supplied release for the current user.
+Use the manifest from a trusted release channel, or the manifest generated
+from your own build above. A checksum stored beside an archive from an
+untrusted source cannot establish who built it.
+
+```sh
+bash scripts/install-macos-smoke.sh v0.1.0-alpha.1 "$bundle"
+```
+
+The smoke command runs on native Apple silicon macOS with a disposable home
+directory. Package CI runs it with the system Bash and tools. The bootstrap entry point takes the version, archive, and
+trusted manifest as separate arguments:
+
+```sh
+bash scripts/install-macos.sh v0.1.0-alpha.1 \
+  "$bundle/difqo-v0.1.0-alpha.1-darwin-arm64.tar.gz" "$bundle/SHA256SUMS"
+```
+
+Files are installed under
+`~/Library/Application Support/Difqo/releases/difqo-VERSION-darwin-arm64`.
+A rerun with the same payload reports that the version is installed. A
+conflicting destination is reported and kept intact. Each version has its
+own directory. The bootstrap uses the current user’s permissions and leaves
+existing settings, data, and versions in place.
+
+The next installer slices are reviewed separately:
+
+1. **CLI setup and PostgreSQL.** Settle the supported local database default
+   and explicit DSN path. Implement readiness checks and repeatable migrations
+   with recovery from failure against a disposable database.
+2. **Per-user service.** Register a LaunchAgent for the configured server,
+   wait for loopback health, and open the UI. Verify restart, rerun,
+   update, and uninstall behavior while preserving data.
+3. **Release and onboarding.** Pin the reviewed version and trusted manifest
+   in the download bootstrap. Exercise the first local goal on a clean Apple
+   silicon Mac before publishing the bootstrap command.
+
 ## Start from a source checkout
 
 Install Go 1.26 or later, Git, and PostgreSQL. Start PostgreSQL on the host and
