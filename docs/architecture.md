@@ -9,6 +9,9 @@ flowchart LR
     Setup -->|"Apply bundle migrations and record checksums atomically"| Postgres
     Operator -->|"Optionally provision on Apple silicon"| Provision["macOS PostgreSQL adapter"]
     Bundle["Verified Apple silicon release"] -->|"Optional relocatable PostgreSQL runtime"| Provision
+    Bundle -->|"Per-user startup adapter"| LaunchAgent["macOS launchd"]
+    LaunchAgent -->|"Run server in the logged-in session"| Server
+    LaunchAgent -->|"Run the managed cluster when selected"| Postgres
     Provision -->|"Initialize private loopback cluster"| Postgres
     Provision -->|"Run the same migration command"| Setup
     Operator -->|"Poll an enrolled repository"| GitHubIntake["Local GitHub intake command"]
@@ -82,6 +85,11 @@ transaction. On Apple silicon, the release adapter uses a bundled or operator-su
 PostgreSQL 18 binary directory to provision a private loopback cluster and
 calls the same CLI to set up the database. See
 [ADR 0011](adr/0011-portable-database-setup.md).
+
+The installed macOS service adapter registers per-user jobs and checks
+readiness through the loopback task API. It preserves external database
+configuration without registering a local database job. See
+[ADR 0013](adr/0013-macos-launch-agents.md).
 
 ## Chief of Staff web app
 

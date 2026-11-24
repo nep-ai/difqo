@@ -55,9 +55,9 @@ The next installer slices are reviewed separately:
 
 1. **Other platform adapters.** Select and verify a PostgreSQL acquisition path
    for Debian and native Windows.
-2. **Per-user service.** Register a LaunchAgent for the configured server,
-   wait for loopback health, and open the UI. Verify restart, rerun,
-   update, and uninstall behavior while preserving data.
+2. **Service lifecycle.** Verify login restart on a clean Mac and add persistent
+   pause, updates, and uninstall while preserving data. The macOS adapter below
+   handles initial registration, startup, and loopback health.
 3. **Release and onboarding.** Pin the reviewed version and trusted manifest
    in the download bootstrap. Exercise the first local goal on a clean Apple
    silicon Mac before publishing the bootstrap command.
@@ -146,6 +146,29 @@ when the variable is set. Verify the adapter with a disposable home:
 ```sh
 python3 scripts/provision-postgres-smoke.py "$installed_release" "$postgres_bin"
 ```
+
+### Start the Apple silicon background service
+
+From the installed release in a logged-in macOS graphical session, provision
+the bundled PostgreSQL cluster with the command above, then run:
+
+```sh
+./bin/service-macos start
+./bin/service-macos status
+```
+
+For an external database, set `DIFQO_DATABASE_URL` before the first start.
+The adapter runs database setup and remembers the URL in a private file.
+A saved database configuration is reused on later starts. The adapter loads
+a PostgreSQL job only for the private cluster. It refuses a port already in use at first startup
+and changes to the saved database selection.
+
+When the database-backed health check passes, open `http://127.0.0.1:8765`.
+Logs are under `~/Library/Application Support/Difqo/service`.
+`./bin/service-macos stop` unloads the service for the current login and
+preserves the database, settings, and LaunchAgent files for the next login.
+The service adapter requires the bundled runtime for a managed cluster.
+See [ADR 0013](adr/0013-macos-launch-agents.md) for the startup contract.
 
 ## Start from a source checkout
 

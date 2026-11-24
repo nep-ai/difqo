@@ -56,7 +56,8 @@ mkdir -p "$stage/payload/bin" "$stage/payload/web" "$stage/payload/migrations" "
 
 CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 go build -trimpath -o "$stage/payload/bin/difqo" ./cmd/difqo
 cp scripts/provision-postgres-macos.sh "$stage/payload/bin/provision-postgres-macos"
-chmod 755 "$stage/payload/bin/provision-postgres-macos"
+cp scripts/service-macos.sh "$stage/payload/bin/service-macos"
+chmod 755 "$stage/payload/bin/provision-postgres-macos" "$stage/payload/bin/service-macos"
 cp -R web/dist/. "$stage/payload/web/"
 cp migrations/*.sql "$stage/payload/migrations/"
 cp LICENSE "$stage/payload/"

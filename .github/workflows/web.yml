@@ -70,6 +70,8 @@ jobs:
           tar -xzf difqo-v0.0.0-ci-darwin-arm64.tar.gz -C extracted
           file extracted/bin/difqo | cut -d: -f2- | grep -E 'Mach-O .*arm64'
           test -x extracted/bin/difqo
+          test -x extracted/bin/service-macos
+          python3 "$GITHUB_WORKSPACE/scripts/service-macos-smoke.py" "$PWD/extracted/bin/service-macos"
           test -x extracted/bin/provision-postgres-macos
           cmp "$GITHUB_WORKSPACE/scripts/provision-postgres-macos.sh" extracted/bin/provision-postgres-macos
           test "$(cat extracted/postgresql/VERSION)" = 18.7
