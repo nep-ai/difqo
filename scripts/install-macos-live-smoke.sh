@@ -47,6 +47,10 @@ git init -q "$scratch/repo"
 git -C "$scratch/repo" -c user.name=Fixture -c user.email=fixture@example.invalid \
   -c commit.gpgSign=false commit --allow-empty -qm 'Synthetic pilot'
 "$release/bin/difqo" worker -repo "$scratch/repo"
+pidfile="$HOME/Library/Application Support/Difqo/postgres-18/data/postmaster.pid"
+old_pid=$(head -n 1 "$pidfile")
+"$service" restart
+test "$old_pid" != "$(head -n 1 "$pidfile")"
 "$service" pause
 if "$service" status; then exit 1; fi
 "$service" restart

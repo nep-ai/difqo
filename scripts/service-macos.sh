@@ -58,6 +58,26 @@ loaded() {
   launchctl print "$domain/$1" >/dev/null 2>&1
 }
 
+stop_job() {
+  local label=$1 attempt
+  if ! loaded "$label"; then return 0; fi
+  if ! launchctl bootout "$domain/$label" && loaded "$label"; then
+    fail_job_unload "$label"
+    return 1
+  fi
+  # bootout can return before print stops finding the previous registration.
+  for ((attempt=0; attempt<40; attempt++)); do
+    if ! loaded "$label"; then return 0; fi
+    sleep 0.5
+  done
+  fail_job_unload "$label"
+}
+
+fail_job_unload() {
+  printf 'Difqo service: %s did not unload. Check launchctl and retry.\n' "$1" >&2
+  return 1
+}
+
 healthy() {
   [ "$(curl --noproxy '*' -fsS --max-time 1 -o /dev/null -w '%{http_code}' "$url/tasks" 2>/dev/null)" = 200 ]
 }
@@ -114,8 +134,8 @@ wrote_database=false
 cleanup() {
   local result=$?
   if [ "$result" -ne 0 ]; then
-    if "$started_server" && loaded "$server_label"; then launchctl bootout "$domain/$server_label" || true; fi
-    if "$started_database" && loaded "$database_label"; then launchctl bootout "$domain/$database_label" || true; fi
+    if "$started_server"; then stop_job "$server_label" || true; fi
+    if "$started_database"; then stop_job "$database_label" || true; fi
     if "$wrote_server"; then rm -f "$agents/$server_label.plist"; fi
     if "$wrote_database"; then rm -f "$agents/$database_label.plist"; fi
     if "$resuming" && disable_jobs && ! loaded "$server_label" && ! loaded "$database_label"; then
@@ -130,8 +150,8 @@ trap 'exit 130' INT
 trap 'exit 143' TERM
 
 stop_jobs() {
-  if loaded "$server_label"; then launchctl bootout "$domain/$server_label"; fi
-  if [ "$1" = managed ] && loaded "$database_label"; then launchctl bootout "$domain/$database_label"; fi
+  stop_job "$server_label" || return
+  if [ "$1" = managed ]; then stop_job "$database_label"; fi
 }
 
 disable_jobs() {
