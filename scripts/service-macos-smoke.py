@@ -41,7 +41,8 @@ case "$1" in
   bootstrap)
     label=${3##*/}
     label=${label%.plist}
-    [ ! -e "$FIXTURE/$label.disabled" ] && [ ! -e "$FIXTURE/$label" ]
+    [ ! -e "$FIXTURE/$label.disabled" ]
+    [ ! -e "$FIXTURE/$label" ]
     printf '%s\n' "$label" >> "$FIXTURE/starts"
     touch "$FIXTURE/$label"
     if [ "${CANCEL_BOOTSTRAP:-}" = "$label" ]; then kill -TERM "$PPID"; fi
@@ -150,6 +151,12 @@ printf '%s\n' "$1" >> "$FIXTURE/cli"
     assert 'Paused' in run(env, adapter, 'status', ok=False)
     assert (work / 'com.difqo.server.disabled').is_file()
     assert not (work / 'com.difqo.postgresql.disabled').exists()
+    disabled_bootstrap = subprocess.run(
+        [tools / 'launchctl', 'bootstrap', f'gui/{os.getuid()}', server_plist],
+        env=env, capture_output=True, timeout=5,
+    )
+    assert disabled_bootstrap.returncode != 0
+    assert not (work / 'com.difqo.server').exists()
     assert 'did not become healthy' in run(env, adapter, 'start', ok=False, NO_HEALTH='1')
     assert 'Paused' in run(env, adapter, 'status', ok=False)
     assert (work / 'com.difqo.server.disabled').is_file()
