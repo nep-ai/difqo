@@ -108,12 +108,12 @@ func registerReview(router *http.ServeMux, tasks store.Tasks, artifacts *os.Root
 		}
 		result := attempt.Result
 		if input.PatchSHA256 != result.Snapshot.PatchSHA256 {
-			http.Error(w, "reviewed patch does not match this run", http.StatusConflict)
+			http.Error(w, "reviewed changes do not match this run", http.StatusConflict)
 			return
 		}
 		patch, err := execution.ReadPatch(artifacts, result.Artifacts, input.PatchSHA256)
 		if err != nil {
-			http.Error(w, "saved patch is unavailable or has changed", http.StatusConflict)
+			http.Error(w, "saved diff is unavailable or has changed", http.StatusConflict)
 			return
 		}
 		if action == "approve" {

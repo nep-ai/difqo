@@ -93,7 +93,7 @@ func Handler(tasks store.Tasks, web fs.FS, artifacts *os.Root, runtimeChoice str
 			if snapshot := task.Attempt.Result.Snapshot; filename == "change.diff" && snapshot != nil {
 				patch, err := execution.ReadPatch(artifacts, task.Attempt.Result.Artifacts, snapshot.PatchSHA256)
 				if err != nil {
-					http.Error(w, "saved patch is unavailable or has changed", http.StatusConflict)
+					http.Error(w, "saved diff is unavailable or has changed", http.StatusConflict)
 					return
 				}
 				http.ServeContent(w, r, filename, time.Time{}, bytes.NewReader(patch))
