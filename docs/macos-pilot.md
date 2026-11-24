@@ -46,6 +46,7 @@ that the LaunchAgent can discover through Docker. The queued goal will still
 be there. If you intentionally switch to supported Podman, repeat the image
 build and device sign-in on that engine using the linked guide. The
 LaunchAgent must be able to discover that Podman connection by default.
+In the worker command, set `runtime=podman` if you switched to Podman.
 
 Run these commands from the same artifact directory:
 
@@ -73,7 +74,7 @@ greeting.txt.` Submit the goal `Replace the fixture greeting according to the
 saved decision.` Then run the worker:
 
 ```sh
-runtime=docker  # Or the trusted wrapper for this same Docker engine.
+runtime=docker  # Set to podman if you built the image and signed in there.
 "$release/bin/difqo" worker -repo "$fixture" -container-runtime "$runtime" \
   -codex-image difqo-codex:0.171.0 -codex-home "$auth_home" \
   -artifacts "$root/artifacts" -check 'test "$(cat greeting.txt)" = after'
