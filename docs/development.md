@@ -30,8 +30,8 @@ untrusted source cannot establish who built it.
 bash scripts/install-macos-smoke.sh v0.1.0-alpha.1 "$bundle"
 ```
 
-The smoke command uses a disposable home directory and exercises the bootstrap
-against the package. The bootstrap entry point takes the version, archive, and
+The smoke command runs on native Apple silicon macOS with a disposable home
+directory. Package CI runs it with the system Bash and tools. The bootstrap entry point takes the version, archive, and
 trusted manifest as separate arguments:
 
 ```sh

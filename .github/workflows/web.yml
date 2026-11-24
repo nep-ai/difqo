@@ -28,7 +28,7 @@ jobs:
 
   macos-package:
     name: macOS release package
-    runs-on: ubuntu-latest
+    runs-on: macos-15
     timeout-minutes: 8
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
@@ -69,4 +69,4 @@ jobs:
             cmp "$migration" "extracted/migrations/$(basename "$migration")"
           done
           test "$(cat extracted/VERSION)" = v0.0.0-ci
-          bash "$GITHUB_WORKSPACE/scripts/install-macos-smoke.sh" v0.0.0-ci "$bundle"
+          PATH=/usr/bin:/bin:/usr/sbin:/sbin /bin/bash "$GITHUB_WORKSPACE/scripts/install-macos-smoke.sh" v0.0.0-ci "$bundle"
