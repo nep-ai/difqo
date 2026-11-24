@@ -74,7 +74,11 @@ func run(ctx context.Context, address string) error {
 	if err != nil {
 		return errors.New("relay database unavailable or relay migrations missing")
 	}
-	return serve(ctx, address, connections.Handler(providers, ready))
+	listener, err := net.Listen("tcp", address)
+	if err != nil {
+		return err
+	}
+	return serve(ctx, listener, connections.Handler(providers, ready))
 }
 
 func githubPilotConfig() githubconnection.PilotConfig {
@@ -122,14 +126,6 @@ func slackPilot(ctx context.Context) (http.Handler, *pgxpool.Pool, error) {
 		return nil, nil, err
 	}
 	return provider, db, nil
-}
-
-func serve(ctx context.Context, address string, handler http.Handler) error {
-	listener, err := net.Listen("tcp", address)
-	if err != nil {
-		return err
-	}
-	return serve(ctx, listener, connections.Handler(provider, ready))
 }
 
 func serve(ctx context.Context, listener net.Listener, handler http.Handler) error {

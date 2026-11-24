@@ -13,6 +13,15 @@ authorization headers and response bodies out of proxy logs. GitHub-only
 mode needs no relay database. If Slack shares the listener, keep its existing
 configuration and migrations.
 
+The [Railway template](../.railway/railway.ts) provisions Slack's private
+database and passes the GitHub pilot settings through shared-variable references.
+Its public ingress forwards the GitHub token route on the same service.
+Define the listed shared variables before applying the template. For a
+Slack-only deployment, define them with empty values. For a GitHub-only service, use
+the same Connections image and `-railway` start mode with only the GitHub
+settings below. The Slack migration pre-deploy command applies only to
+deployments with the Slack relay database.
+
 | Setting | Value |
 | --- | --- |
 | `DIFQO_GITHUB_APP_ID` | Numeric ID of the existing official GitHub App |

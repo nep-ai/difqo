@@ -21,6 +21,15 @@ export default defineRailway((ctx) => {
       DIFQO_SLACK_SIGNING_SECRET: ctx.shared.DIFQO_SLACK_SIGNING_SECRET,
       DIFQO_SLACK_TOKEN_KEY: ctx.shared.DIFQO_SLACK_TOKEN_KEY,
       DIFQO_SLACK_ENROLLMENT_TOKEN: ctx.shared.DIFQO_SLACK_ENROLLMENT_TOKEN,
+      // Leave the app ID empty for a Slack-only deployment.
+      DIFQO_GITHUB_APP_ID: ctx.shared.DIFQO_GITHUB_APP_ID,
+      DIFQO_GITHUB_INSTALLATION_ID: ctx.shared.DIFQO_GITHUB_INSTALLATION_ID,
+      DIFQO_GITHUB_REPOSITORY: ctx.shared.DIFQO_GITHUB_REPOSITORY,
+      DIFQO_GITHUB_REPOSITORY_ID: ctx.shared.DIFQO_GITHUB_REPOSITORY_ID,
+      DIFQO_GITHUB_OWNER_LOGIN: ctx.shared.DIFQO_GITHUB_OWNER_LOGIN,
+      DIFQO_GITHUB_OWNER_ID: ctx.shared.DIFQO_GITHUB_OWNER_ID,
+      DIFQO_GITHUB_APP_PRIVATE_KEY: ctx.shared.DIFQO_GITHUB_APP_PRIVATE_KEY,
+      DIFQO_GITHUB_PILOT_PROOF_SHA256: ctx.shared.DIFQO_GITHUB_PILOT_PROOF_SHA256,
     },
   });
   return project("difqo-connections", { resources: [relay, database] });
