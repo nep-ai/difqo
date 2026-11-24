@@ -25,6 +25,48 @@ projects, with one resolved project per run. When context could refer to
 several open tasks or projects, ask which one the operator means before
 starting work or applying an action.
 
+The Slack DM accepts plain text, a message with one or more files, and
+files sent on their own. The web app accepts the same inputs. When a file
+arrives without a clear request, ask what to do with it. Start with
+images, documents, text logs, source files, and common structured data.
+Show when a file is available, waiting, oversized, unsupported, or
+unavailable. If a missing file matters to the task, ask for an alternative
+before dispatch. Treat file names and content as untrusted task input.
+
+Process only file references from the linked DM. Through the official
+relay, resolve Slack-hosted files using `files:read`, stream bounded
+downloads to the authorized local client, and persist them in local
+conversation storage. The private app connector fetches the same files
+directly. File references awaiting delivery follow relay retention. Preserve
+message and file identity on replay, show remote-provider files as links,
+and send Slack credentials only to approved Slack file hosts.
+[Slack file API][slack-files]
+
+### Discoverable Slack actions
+
+Plain-language conversation is the entry point. Register zero slash
+commands and accept natural-language goals without a prefix. Use Block Kit
+only where a visible choice helps the operator act or see a result.
+Each action has an equivalent in the web app and through natural-language
+conversation, with the same authorization and task state.
+
+| Moment | Slack interaction |
+| --- | --- |
+| The project is ambiguous | Ask one question and offer a chooser with eligible projects. |
+| Work is underway | Show the task and current state in a compact status card. Keep detailed progress in its thread. |
+| A decision is needed | Explain the decision and offer contextual buttons such as **Continue** or **Cancel task**. Use a modal when the operator needs to enter several fields. |
+| Work is ready or blocked | Show check and review status, with **Open pull request** or a recovery action such as **Retry check** when available. |
+
+Provide accessible text for interactive messages. Verify Slack interaction
+signatures and respond within Slack's three-second window. Forward typed
+actions to the local service, where the operator, binding, task, and
+expected state are checked before execution. Resolve repeated clicks once
+and show current state when an old card is used. Block Kit controls provide
+input only and inherit the same action policy as the web app.
+[Slack actions][slack-actions] · [Slack interaction callbacks][slack-interactions]
+
+### Delivery and acknowledgment
+
 Acknowledge “queued” when the relay has saved a Slack goal pending local
 delivery, and “accepted” after the local service commits the task. Keep
 updates tied to meaningful transitions. For official Slack, send outbound
@@ -91,18 +133,22 @@ compatible.
 1. Extend the existing Slack connection with shared task status and a reply
    acknowledging a durably accepted goal. Exercise the same task from the
    web app and Slack. Cover duplicate delivery, a lost provider response,
-   disconnect, and rejection of unlinked identities. Add clarification and
-   action routing on the same shared state. Track under [#11][slack].
-2. Add project-bound draft publication using a fixture GitHub endpoint and
+   disconnect, and rejection of unlinked identities. Track under [#11][slack].
+2. Accept plain text, text with multiple files, and file-only messages.
+   Verify replay, invalid file URLs, missing access, and size limits with
+   synthetic files. Add contextual Block Kit actions on the shared local
+   task state. Verify a plain-text response and a button can resolve the
+   same decision, plus repeated clicks and stale cards. Track under [#11][slack].
+3. Add project-bound draft publication using a fixture GitHub endpoint and
    an isolated Git remote. Force a restart after each external write and
    verify one branch and one draft PR. Prove zero writes for revoked
    credentials and mismatched repositories. Track under [#53][delivery],
    with installation and scoping under [#12][github-intake].
-3. Run independent review and enforce the current-head check and review
+4. Run independent review and enforce the current-head check and review
    gate. Verify one clean result and one blocker followed by a new head.
    Verify both surfaces report the same states and links. Track under
    [#21][review].
-4. Run a live acceptance exercise with an explicitly enrolled test
+5. Run a live acceptance exercise with an explicitly enrolled test
    repository and linked Slack DM. Start in one surface and answer a
    clarification in the other. Verify the saved decision affected the
    result, then inspect the head, check, findings, and one matching PR in
@@ -114,4 +160,7 @@ compatible.
 [delivery]: https://github.com/nep-ai/difqo/issues/53
 [local-review]: 0005-exact-patch-review.md
 [slack-api]: https://docs.slack.dev/reference/methods/chat.postMessage/
+[slack-files]: https://docs.slack.dev/messaging/working-with-files/
+[slack-actions]: https://docs.slack.dev/reference/block-kit/blocks/actions-block
+[slack-interactions]: https://docs.slack.dev/interactivity/handling-user-interaction/
 [github-pr]: https://docs.github.com/en/rest/pulls/pulls#create-a-pull-request
