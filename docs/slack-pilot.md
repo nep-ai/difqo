@@ -145,9 +145,8 @@ private `DATABASE_URL` reference and Railway HTTPS ingress targets port
 8080. Inside the same container, the proxy forwards to Connections at
 `127.0.0.1:8766` without rewriting signed bodies or logging requests.
 
-1. In the approved Railway project and staging environment, install the
-   IaC SDK with
-   `npm install --prefix .railway --no-save --package-lock=false railway@3.17.0`.
+1. In the approved Railway project and staging environment, use Railway CLI
+   5.75.0 and install the locked IaC SDK with `npm ci --prefix .railway`.
    Populate the named `DIFQO_CONNECTIONS_ORIGIN` and `DIFQO_SLACK_*` shared
    variables in Railway. Start with synthetic settings. Keep live values
    in Railway, and run `railway config plan` without showing values. Verify
@@ -175,6 +174,23 @@ private `DATABASE_URL` reference and Railway HTTPS ingress targets port
    local OAuth handoff and the scoped `nepai` acceptance above. For recovery,
    use the retirement and database restore procedure below before restoring
    ingress.
+
+### GitHub Actions staging
+
+The GitHub `staging` environment restricts deployments to the `main` branch.
+It holds an environment-scoped Railway `RAILWAY_TOKEN` secret, plus
+`RAILWAY_PROJECT_ID` and `RAILWAY_ENVIRONMENT_ID` as environment variables.
+Keep Slack and GitHub App runtime credentials in Railway.
+
+GitHub Actions applies a pinned Railway configuration plan after changes to
+`.railway/` or the staging workflow land on `main`. A maintainer can also
+dispatch the Railway staging workflow from `main`. Each run checks out the
+current `main` configuration, including retries of older runs. The workflow
+serializes applies, reports failed or partial applies as failures, and
+requires separate manual handling for destructive changes.
+Railway deploys the Connections source from its linked `main` branch.
+Staging is for internal testing. Production will use a separate environment
+and release process.
 
 Go CI builds and runs the container against a private synthetic PostgreSQL
 container. To repeat the image rehearsal locally, run:
