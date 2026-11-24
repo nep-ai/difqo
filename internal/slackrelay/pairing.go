@@ -85,6 +85,8 @@ func newFixture(db *pgxpool.Pool, tokenKey [32]byte, origin, slackOrigin, client
 	mux.HandleFunc("PUT /pairings/{id}", r.poll)
 	mux.HandleFunc("DELETE /pairings/{id}", r.revoke)
 	mux.HandleFunc("POST /pairings/{id}/claim", r.claim)
+	mux.HandleFunc("GET /pairings/{id}/events", r.deliveries)
+	mux.HandleFunc("PUT /pairings/{id}/events/{event}", r.receipt)
 	mux.HandleFunc("POST /slack/events", r.signedEvents(signingSecret, now))
 	mux.HandleFunc("POST /pairings/{id}/identity", r.start(signIn))
 	mux.HandleFunc("POST /pairings/{id}/install", r.start(installApp))

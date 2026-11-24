@@ -11,13 +11,14 @@ import (
 var ErrSlackTransition = errors.New("Slack connection changed or cannot perform that action")
 
 type SlackPairing struct {
-	ID        string    `json:"id"`
-	Proof     string    `json:"proof"`
-	Relay     string    `json:"relay"`
-	Expires   time.Time `json:"expires"`
-	State     string    `json:"state"`
-	Workspace string    `json:"workspace,omitempty"`
-	Installed string    `json:"installed,omitempty"`
+	ID           string    `json:"id"`
+	Proof        string    `json:"proof"`
+	Relay        string    `json:"relay"`
+	Expires      time.Time `json:"expires"`
+	State        string    `json:"state"`
+	Workspace    string    `json:"workspace,omitempty"`
+	Installed    string    `json:"installed,omitempty"`
+	RelayClaimed bool      `json:"relay_claimed,omitempty"`
 
 	Operator string       `json:"operator,omitempty"`
 	Binding  SlackBinding `json:"binding"`
@@ -54,6 +55,10 @@ func readSlackConnection(ctx context.Context, db slackQuerier, lock bool) (Slack
 		if err := json.Unmarshal(pairing, &state.Pairing); err != nil {
 			return state, err
 		}
+		if state.Pairing != nil {
+			// Pairing snapshots are compared across separate database reads.
+			state.Pairing.Expires = state.Pairing.Expires.UTC()
+		}
 	}
 	var private SlackBinding
 	err := db.QueryRowContext(ctx, slackBindingQuery).
@@ -66,7 +71,7 @@ func readSlackConnection(ctx context.Context, db slackQuerier, lock bool) (Slack
 	return state, nil
 }
 
-// UpdateSlackConnection serializes connection changes with private intake.
+// UpdateSlackConnection serializes connection changes with Slack intake.
 func (s Tasks) UpdateSlackConnection(ctx context.Context, change func(*SlackConnection) error) (SlackConnection, error) {
 	tx, err := s.DB.BeginTx(ctx, nil)
 	if err != nil {

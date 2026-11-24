@@ -186,10 +186,30 @@ or an intentional skip, and HTTP 503 if the queue cannot commit. Revocation
 clears the old claim and queued goal bodies in the same transaction while
 retaining replay identifiers.
 
-The relay remains a loopback fixture. The local confirmation and disconnect
-handlers still need to call the relay claim and revocation endpoints. Outbound
-polling, local receipt after task creation, automatic retention, workspace
-installation reuse, and live Slack revocation events remain follow-up work.
+When the local server starts with `-slack-relay-fixture`, it polls outbound.
+Confirmation persists an intent before claiming the exact binding. An
+interrupted claim retries with the same pairing proof. Disconnect retires
+the local generation first and persists the pending relay revocation until
+the relay acknowledges it. A pending disconnect blocks new pairing so a
+relay outage cannot orphan an active route. If the fixture restarts at a
+different address during either operation, restart the relay with its original
+loopback address and database, then let the local server retry. The pairing
+proof is scoped to that saved origin.
+
+The relay uses the pairing proof for `GET /pairings/{id}/events` and
+`PUT /pairings/{id}/events/{event_id}`. A poll returns the active binding and
+at most eight queued goals. The local store checks the exact binding and
+generation under the connection lock and commits the task with the scoped
+event ID. Only then does the local connector send the receipt. The relay
+clears the goal body but retains the event ID, so a lost receipt or replay
+does not create another task. A batch received after local disconnect
+cannot create a task or send a receipt for the retired generation.
+
+For the full delivery test, apply `migrations/*.sql` to a second disposable
+database and set `DIFQO_SLACK_DELIVERY_TEST_DATABASE_URL` as well as the relay
+test database URL. Run `go test -race -count=1 ./internal/slackrelay`.
+Automatic retention, workspace installation reuse, live Slack revocation
+events, and hosted deployment remain follow-up work.
 An outgoing-only local client keeps the workstation off the public Internet.
 A direct OAuth callback on each workstation would distribute Slack secrets
 and require a reachable callback for event delivery. An optional private

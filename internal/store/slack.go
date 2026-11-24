@@ -73,10 +73,35 @@ func (s Tasks) ImportPrivateSlack(ctx context.Context, binding SlackBinding, eve
 		return false, err
 	}
 
+	return importSlackGoal(ctx, tx, binding, eventID, goal)
+}
+
+// ImportOfficialSlack checks the active connection under the same lock used
+// by disconnect and commits the event identity with the task.
+func (s Tasks) ImportOfficialSlack(ctx context.Context, generation int64, pairingID string, binding SlackBinding, eventID, goal string) (bool, error) {
+	tx, err := s.DB.BeginTx(ctx, nil)
+	if err != nil {
+		return false, err
+	}
+	defer tx.Rollback()
+	state, err := readSlackConnection(ctx, tx, true)
+	if err != nil {
+		return false, err
+	}
+	p := state.Pairing
+	if state.Mode != "official" || state.Generation != generation || p == nil ||
+		p.ID != pairingID || p.Binding != binding || !p.RelayClaimed {
+		return false, ErrSlackBinding
+	}
+	return importSlackGoal(ctx, tx, binding, eventID, goal)
+}
+
+func importSlackGoal(ctx context.Context, tx *sql.Tx, binding SlackBinding, eventID, goal string) (bool, error) {
 	var savedGoal string
-	err = tx.QueryRowContext(ctx, `
-		SELECT t.goal FROM slack_task_sources s JOIN tasks t ON t.id = s.task_id WHERE s.event_id = $1`,
-		eventID).Scan(&savedGoal)
+	err := tx.QueryRowContext(ctx, `
+		SELECT t.goal FROM slack_task_sources s JOIN tasks t ON t.id = s.task_id
+		WHERE s.app_id = $1 AND s.workspace_id = $2 AND s.event_id = $3`,
+		binding.AppID, binding.WorkspaceID, eventID).Scan(&savedGoal)
 	if err == nil {
 		if savedGoal != goal {
 			return false, ErrSlackReplay
@@ -91,7 +116,8 @@ func (s Tasks) ImportPrivateSlack(ctx context.Context, binding SlackBinding, eve
 		return false, err
 	}
 	if _, err := tx.ExecContext(ctx, `
-		INSERT INTO slack_task_sources (event_id, task_id) VALUES ($1, $2)`, eventID, task.ID); err != nil {
+		INSERT INTO slack_task_sources (app_id, workspace_id, event_id, task_id) VALUES ($1, $2, $3, $4)`,
+		binding.AppID, binding.WorkspaceID, eventID, task.ID); err != nil {
 		return false, err
 	}
 	return true, tx.Commit()

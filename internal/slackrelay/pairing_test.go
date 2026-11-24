@@ -42,6 +42,7 @@ type fixture struct {
 	db                                           *pgxpool.Pool
 	dsn                                          string
 	tokenKey                                     [32]byte
+	wrapRelay                                    func(http.Handler) http.Handler
 	blockInstall                                 chan struct{}
 	exchanging                                   chan struct{}
 	blockDM                                      chan struct{}
@@ -138,6 +139,9 @@ func (f *fixture) startRelay(address string) {
 	handler, err := newFixture(f.db, f.tokenKey, "http://"+f.server.Listener.Addr().String(), f.slack.URL, testClient, testSecret, f.appID, testSigningSecret, f.time)
 	if err != nil {
 		f.t.Fatal(err)
+	}
+	if f.wrapRelay != nil {
+		handler = f.wrapRelay(handler)
 	}
 	f.server.Config.Handler = handler
 	f.server.Start()

@@ -22,6 +22,7 @@ binding = {'app_id': 'A22', 'workspace_id': 'T22', 'operator_id': 'U22', 'channe
 private = {'app_id': 'A11', 'workspace_id': 'T11', 'operator_id': 'U11', 'channel_id': 'D11'}
 proofs = {}
 stage = {}
+claimed = set()
 
 
 def sql(command, dsn=scoped_database):
@@ -46,6 +47,44 @@ class Relay(BaseHTTPRequestHandler):
         self.send_header('Content-Length', str(len(body)))
         self.end_headers()
         self.wfile.write(body)
+
+    def do_POST(self):
+        pair = self.path.removeprefix('/pairings/').removesuffix('/claim')
+        expected = json.loads(self.rfile.read(int(self.headers['Content-Length'])))
+        if proofs.get(pair) != self.headers.get('Authorization'):
+            self.send_error(403)
+        elif not stage:
+            self.send_error(503)
+        elif stage.get('state') != 'ready_to_link' or expected != stage.get('binding'):
+            self.send_error(409)
+        else:
+            claimed.add(pair)
+            self.send_response(204)
+            self.end_headers()
+
+    def do_GET(self):
+        pair = self.path.removeprefix('/pairings/').removesuffix('/events')
+        if pair not in claimed or proofs.get(pair) != self.headers.get('Authorization'):
+            self.send_error(403)
+            return
+        if not stage:
+            self.send_error(503)
+            return
+        body = json.dumps({'binding': binding, 'events': []}).encode()
+        self.send_response(200)
+        self.send_header('Content-Length', str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def do_DELETE(self):
+        pair = self.path.removeprefix('/pairings/')
+        proof = self.headers.get('Authorization')
+        if proofs.setdefault(pair, proof) != proof:
+            self.send_error(403)
+            return
+        claimed.discard(pair)
+        self.send_response(204)
+        self.end_headers()
 
     def log_message(self, *_):
         pass
