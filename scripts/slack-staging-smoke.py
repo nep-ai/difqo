@@ -1,4 +1,5 @@
 """Rehearse the pilot retention and retirement commands in a disposable schema."""
+from contextlib import ExitStack
 from pathlib import Path
 from tempfile import NamedTemporaryFile
 from urllib.parse import parse_qsl, unquote, urlencode, urlsplit, urlunsplit
@@ -22,17 +23,19 @@ def sql(*args, database=scoped):
 def operation(name, *args):
     host, port = url.hostname, str(url.port or 5432)
     user, database = unquote(url.username or ""), unquote(url.path.removeprefix("/"))
-    password = unquote(url.password or "")
     env = os.environ.copy()
-    env.pop("PGPASSWORD", None)
     env["PGOPTIONS"] = "-csearch_path=" + schema
     if sslmode := dict(params).get("sslmode"):
         env["PGSSLMODE"] = sslmode
-    with NamedTemporaryFile(mode="w") as secret:
-        fields = (host, port, database, user, password)
-        secret.write(":".join(field.replace("\\", "\\\\").replace(":", "\\:") for field in fields) + "\n")
-        secret.flush()
-        env["PGPASSFILE"] = secret.name
+    with ExitStack() as cleanup:
+        if url.password is not None:
+            # An explicit URL password takes precedence over libpq defaults.
+            env.pop("PGPASSWORD", None)
+            secret = cleanup.enter_context(NamedTemporaryFile(mode="w"))
+            fields = (host, port, database, user, unquote(url.password))
+            secret.write(":".join(field.replace("\\", "\\\\").replace(":", "\\:") for field in fields) + "\n")
+            secret.flush()
+            env["PGPASSFILE"] = secret.name
         subprocess.run(
             ["psql", "-XqAt", "--no-password", "--host", host, "--port", port,
              "--username", user, "--dbname", database, "-v", "ON_ERROR_STOP=1",
