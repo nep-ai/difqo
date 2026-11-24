@@ -18,6 +18,19 @@ network = "connections-smoke-" + uuid4().hex[:10]
 database, relay = network + "-db", network + "-relay"
 proof, pairing, enrollment = "cd" * 32, "ab" * 16, "ef" * 32
 signing_secret = "fixture-slack-signing-secret"
+github_proof = "a1" * 32
+github_env = {
+    "DIFQO_GITHUB_APP_ID": "10",
+    "DIFQO_GITHUB_INSTALLATION_ID": "20",
+    "DIFQO_GITHUB_REPOSITORY": "fixture/repo",
+    "DIFQO_GITHUB_REPOSITORY_ID": "30",
+    "DIFQO_GITHUB_OWNER_LOGIN": "fixture-owner",
+    "DIFQO_GITHUB_OWNER_ID": "40",
+    "DIFQO_GITHUB_APP_PRIVATE_KEY": subprocess.check_output(
+        ["openssl", "genrsa", "2048"], text=True, stderr=subprocess.DEVNULL, timeout=10,
+    ),
+    "DIFQO_GITHUB_PILOT_PROOF_SHA256": sha256(github_proof.encode()).hexdigest(),
+}
 env = os.environ | {
     "PORT": "8080",
     "DIFQO_RELAY_DATABASE_URL": "postgres://postgres:fixture@postgres:5432/postgres?sslmode=disable",
@@ -30,7 +43,8 @@ env = os.environ | {
     "DIFQO_SLACK_SIGNING_SECRET": signing_secret,
     "DIFQO_SLACK_ENROLLMENT_TOKEN": enrollment,
     "DIFQO_SLACK_TOKEN_KEY": b64encode(bytes([1]) * 32).decode(),
-}
+} | github_env
+github_flags = [part for key in github_env for part in ("--env", key)]
 flags = [part for key in (
     "PORT", "DIFQO_RELAY_DATABASE_URL", "DIFQO_CONNECTIONS_ORIGIN", "DIFQO_SLACK_APP_ID",
     "DIFQO_SLACK_WORKSPACE_ID", "DIFQO_SLACK_OPERATOR_ID", "DIFQO_SLACK_CLIENT_ID",
@@ -83,9 +97,12 @@ try:
     assert container("exec", database, "psql", "-U", "postgres", "-Atc",
                      "SELECT count(*) FROM difqo_relay_migrations").stdout.strip() == str(count)
     container("run", "-d", "--network", network, "--name", relay,
-              "-p", "127.0.0.1::8080", *flags, image)
+              "-p", "127.0.0.1::8080", *flags, *github_flags, image)
     wait_for(lambda: http("/readyz")[0] == 200, "Railway ingress did not become ready")
     assert http("/healthz")[0] == 200
+    assert http("/github/token", "POST") == (401, b"")
+    github_bearer = {"Authorization": "Bearer " + github_proof}
+    assert http("/github/token?repository_id=99", "POST", headers=github_bearer) == (400, b"")
 
     stamp = str(int(time.time()))
     body = '{ "type" : "url_verification",\n "challenge" : "signé" }'.encode()
@@ -105,8 +122,16 @@ try:
     wait_for(lambda: http("/readyz")[0] == 200, "Railway ingress did not recover after restart")
     assert http(path, "PUT", headers=bearer)[0] == 200
     assert http(path, "DELETE", headers=bearer)[0] == 204
+
+    container("rm", "-fv", relay)
+    container("run", "-d", "--name", relay, "-p", "127.0.0.1::8080",
+              "--env", "PORT", *github_flags, image)
+    wait_for(lambda: http("/readyz")[0] == 200, "GitHub-only Railway ingress did not become ready")
+    assert http("/slack/enroll", "POST")[0] == 404
+    assert http("/github/token", "POST") == (401, b"")
+    assert http("/github/token", "POST", b'{"installation_id":99}', github_bearer) == (400, b"")
 finally:
     container("rm", "-fv", relay, database, check=False)
     container("network", "rm", network, check=False)
 
-print("Connections image passed migration replay, signed ingress, enrollment, restart, and revocation.")
+print("Connections image passed migration replay, signed Slack ingress, enrollment, restart, revocation, and GitHub ingress in both modes.")
