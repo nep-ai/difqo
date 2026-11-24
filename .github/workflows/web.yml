@@ -82,3 +82,7 @@ jobs:
           done
           test "$(cat extracted/VERSION)" = v0.0.0-ci
           PATH=/usr/bin:/bin:/usr/sbin:/sbin /bin/bash "$GITHUB_WORKSPACE/scripts/install-macos-smoke.sh" v0.0.0-ci "$bundle" --provision
+          # Exercise the explicit path with no runtime beside the release CLI.
+          supplied_runtime="$build_dir/supplied runtime"
+          mv extracted/postgresql "$supplied_runtime"
+          python3 "$GITHUB_WORKSPACE/scripts/provision-postgres-smoke.py" "$PWD/extracted" "$supplied_runtime/bin"

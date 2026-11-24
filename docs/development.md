@@ -101,11 +101,13 @@ database on a clean machine and the provisioning boundary.
 ### Provision a private PostgreSQL cluster on Apple silicon
 
 From an installed release containing the runtime, run the macOS adapter
-without arguments and set the binary directory for the manual start steps:
+without arguments and set the binary directory for the manual start steps.
+Both examples clear any inherited `DIFQO_DATABASE_URL` for the provisioning
+command so the adapter creates a private cluster:
 
 ```sh
 postgres_bin="$PWD/postgresql/bin"
-/bin/bash ./bin/provision-postgres-macos
+env -u DIFQO_DATABASE_URL /bin/bash ./bin/provision-postgres-macos
 ```
 
 For supplied PostgreSQL 18 binaries, set `postgres_bin` to their trusted
@@ -113,7 +115,7 @@ For supplied PostgreSQL 18 binaries, set `postgres_bin` to their trusted
 
 ```sh
 postgres_bin=/path/to/postgresql-18/bin
-/bin/bash ./bin/provision-postgres-macos "$postgres_bin"
+env -u DIFQO_DATABASE_URL /bin/bash ./bin/provision-postgres-macos "$postgres_bin"
 ```
 
 It stores data and a mode-0600 generated credential in
