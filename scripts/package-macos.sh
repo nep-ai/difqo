@@ -19,7 +19,8 @@ mkdir -p "$2"
 output=$(cd "$2" && pwd)
 cd "$root"
 lock="$output/.$bundle.lock"
-if ! mkdir "$lock"; then
+# Let Bash reserve the lock file with an exclusive create.
+if ! (set -o noclobber; : > "$lock"); then
   printf 'Cannot reserve output for %s\n' "$bundle" >&2
   exit 1
 fi
@@ -28,7 +29,7 @@ cleanup() {
   if [ -n "$stage" ]; then
     rm -rf "$stage"
   fi
-  rmdir "$lock"
+  rm -f "$lock"
 }
 trap cleanup EXIT
 
