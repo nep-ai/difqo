@@ -1,4 +1,4 @@
-// Package slackrelay implements the official Slack pairing and event protocols for loopback fixtures.
+// Package slackrelay implements the official Slack pairing and event protocols.
 package slackrelay
 
 import (
@@ -40,6 +40,7 @@ type relay struct {
 	pairings pairingStore
 	origin   string
 	slack    slackClient
+	pilot    *pilotConfig
 }
 
 var (
@@ -58,8 +59,15 @@ func newFixture(db *pgxpool.Pool, tokenKey [32]byte, origin, slackOrigin, client
 	if !loopbackOrigin(origin) || !loopbackOrigin(slackOrigin) || clientID == "" || clientSecret == "" || signingSecret == "" || !slackAppID.MatchString(appID) {
 		return nil, errors.New("Slack relay fixture requires numeric HTTP loopback origins and synthetic app configuration")
 	}
+	return newRelay(db, tokenKey, origin, slackOrigin, clientID, clientSecret, appID, signingSecret, now, nil)
+}
+
+func newRelay(db *pgxpool.Pool, tokenKey [32]byte, origin, slackOrigin, clientID, clientSecret, appID, signingSecret string, now func() time.Time, pilot *pilotConfig) (http.Handler, error) {
+	if clientID == "" || clientSecret == "" || signingSecret == "" || !slackAppID.MatchString(appID) {
+		return nil, errors.New("Slack relay requires valid app credentials")
+	}
 	if db == nil || tokenKey == ([32]byte{}) {
-		return nil, errors.New("Slack relay fixture requires a relay database and synthetic token key")
+		return nil, errors.New("Slack relay fixture requires a relay database and token key")
 	}
 	block, err := aes.NewCipher(tokenKey[:])
 	if err != nil {
@@ -81,7 +89,12 @@ func newFixture(db *pgxpool.Pool, tokenKey [32]byte, origin, slackOrigin, client
 			verifier: oidc.NewVerifier(slackOrigin, keys, &oidc.Config{ClientID: clientID,
 				SupportedSigningAlgs: []string{oidc.RS256}, Now: now})},
 	}
+	r.pilot = pilot
 	mux := http.NewServeMux()
+	if pilot != nil {
+		r.pairings.scope = pilot.workspace + ":" + pilot.operator
+		mux.HandleFunc("POST /slack/enroll", r.enroll)
+	}
 	mux.HandleFunc("PUT /pairings/{id}", r.poll)
 	mux.HandleFunc("DELETE /pairings/{id}", r.revoke)
 	mux.HandleFunc("POST /pairings/{id}/claim", r.claim)
@@ -217,6 +230,9 @@ func (r *relay) start(kind flowKind) http.HandlerFunc {
 			pairingError(w, err)
 			return
 		}
+		if r.pilot != nil {
+			team = r.pilot.workspace
+		}
 		writeJSON(w, map[string]string{"url": r.slack.authorize(kind, r.callbackURL(kind), state, nonce, team)})
 	}
 }
@@ -261,6 +277,10 @@ func (r *relay) callback(kind flowKind) http.HandlerFunc {
 		}
 		if err != nil {
 			w.WriteHeader(http.StatusBadGateway)
+			return
+		}
+		if r.pilot != nil && !r.pilot.allows(kind, who, installed) {
+			w.WriteHeader(http.StatusForbidden)
 			return
 		}
 		if err := r.pairings.complete(ctx, f, who, installed); err != nil {

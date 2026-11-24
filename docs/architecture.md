@@ -109,7 +109,7 @@ See [ADR 0005](adr/0005-specialist-configuration.md) and
 ```mermaid
 flowchart LR
     Browser["React + Vite web app"] --> Intake
-    Slack["Slack"] <-->|"Official app OAuth and signed DM events"| SlackRelay["Slack provider in planned Connections service"]
+    Slack["Slack"] <-->|"Official app OAuth and signed DM events"| SlackRelay["Slack provider in Connections"]
     SlackRelay <-->|"Outbound pairing and delivery receipts over configured HTTPS"| SlackConnector["Local official Slack connector"]
     Slack <-->|"Optional private app over Socket Mode"| SlackSocket["Local private Slack connector"]
     SlackConnector --> Intake

@@ -1,11 +1,10 @@
 # Official Slack pilot checklist
 
 This checklist covers the first official Slack pilot in the `nepai` workspace.
-The local client supports a configured HTTPS relay. The relay provider under
-`internal/slackrelay` currently runs in the loopback fixture, which exercises
-pairing, signed events, queueing and receipts. The hosted Connections process
-and the operator-facing OAuth URL handoff still need to be shipped before
-this checklist can be used for live acceptance.
+The local client supports a configured HTTPS relay. Build the Connections
+process with `go build ./cmd/connections`. It serves the Slack provider over
+a numeric loopback listener behind an HTTPS ingress. The operator-facing
+OAuth handoff remains a prerequisite for live acceptance.
 
 ## Before deployment
 
@@ -14,13 +13,13 @@ this checklist can be used for live acceptance.
   Slack user ID. The workspace display name alone is insufficient.
 - Choose the stable HTTPS origin and identify its deployment owner. Reserve
   it for Connections so an existing pairing can recover at the same origin.
-- Ship a Connections listener that mounts the Slack provider with its
-  endpoints pinned to Slack. Gate pairing enrollment to authorized pilot
-  operators and verify the allowed workspace ID on identity and installation.
-  Keep the public Slack callback and signed event routes reachable.
-- Ship the local OAuth handoff. It calls the relay's identity and installation
-  initiation routes with the pairing proof and sends only the resulting
-  OAuth URLs to the operator's browser. The proof remains local.
+- Keep the Connections listener on loopback and route the configured HTTPS
+  origin to it. Keep the Slack callback and signed event routes reachable.
+  The process uses only Slack's official origin for provider requests.
+- Ship the local handoff. The approved operator must enroll the locally
+  generated pairing before starting OAuth. The local service then calls
+  the identity and installation routes with its pairing proof. Only the
+  returned OAuth URLs go to the browser.
 - Set and verify a retention limit for undelivered goal bodies. Ensure
   access logs omit request bodies, OAuth callback query strings, and
   authorization headers. Configure bounded request timeouts at ingress.
@@ -29,8 +28,8 @@ this checklist can be used for live acceptance.
 
 ## Hosted configuration
 
-Use these names for the hosted Connections configuration. They describe the
-deployment contract for the hosted entry point.
+Pass these settings to the Connections process. Its default listener is
+`127.0.0.1:8766`. Use `-listen` to choose another numeric loopback address.
 
 | Setting | Value |
 | --- | --- |
@@ -38,13 +37,19 @@ deployment contract for the hosted entry point.
 | `DIFQO_RELAY_DATABASE_URL` | Secret DSN for the dedicated relay database |
 | `DIFQO_SLACK_APP_ID` | Official Slack app ID |
 | `DIFQO_SLACK_WORKSPACE_ID` | Allowed `nepai` workspace ID |
+| `DIFQO_SLACK_OPERATOR_ID` | Approved Slack operator user ID |
+| `DIFQO_SLACK_ENROLLMENT_TOKEN` | Secret 32-byte random token encoded as 64 lowercase hex characters |
 | `DIFQO_SLACK_CLIENT_ID` | OAuth Client ID |
 | `DIFQO_SLACK_CLIENT_SECRET` | OAuth Client Secret |
 | `DIFQO_SLACK_SIGNING_SECRET` | Slack request signing secret |
 | `DIFQO_SLACK_TOKEN_KEY` | Secret base64-encoded 32-byte encryption key, stable across restarts |
 
-Provide secrets only to the hosted process through the deployment's secret
-store. The local client uses its pairing proof. Keep the signing and OAuth
+Inject hosted settings through the deployment's secret store. Provide the
+enrollment token only to the authorized pilot enrollment client. That client
+posts the locally generated `pairing_id` and `proof` to `POST /slack/enroll`
+with the enrollment token as its bearer credential. Subsequent pairing
+routes use the pairing proof. Enrollment is retryable with the same ID and
+proof and cannot replace a retired pairing. Keep the signing and OAuth
 secrets separate. Keep token rotation off for the pilot until refresh-token
 handling is implemented.
 
@@ -75,8 +80,8 @@ handling is implemented.
   database using `psql -v ON_ERROR_STOP=1`. Apply `migrations/*.sql` separately
   to the local database. The deployment should verify the pairing, OAuth flow,
   and event tables at readiness so a missing migration fails the startup check.
-- Provide `GET /healthz` for listener liveness and `GET /readyz` for the
-  relay database and schema check in the hosted process. Expect HTTP 200
+- Probe `GET /healthz` for listener liveness and `GET /readyz` for the
+  relay database and schema check. Expect HTTP 200
   from both after migration and a non-2xx readiness result if the database
   or required schema is unavailable. Verify public TLS with a standard
   client and the Slack-signed URL challenge through ingress. Verify a request

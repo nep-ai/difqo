@@ -215,6 +215,17 @@ test database URL. Run
 `go test -race -count=1 ./internal/slackrelay ./internal/slackintake`.
 Automatic retention, workspace installation reuse, live Slack revocation
 events, and hosted deployment remain follow-up work.
+The Connections binary mounts Slack as a provider on a numeric loopback
+listener behind HTTPS ingress. Health routes expose only liveness and
+database readiness. A separate enrollment credential authorizes creation
+of a pairing for the configured pilot workspace and operator. Per-pair
+proof continues to authorize every lifecycle and delivery request. Hosted
+pairings carry their approved scope in PostgreSQL, so fixture rows and
+pairings from a different configuration remain inaccessible. Identity
+callbacks must match the approved operator and workspace. The installation
+callback must match the workspace, while a separate admin can install the
+app. The local enrollment and OAuth URL handoff is the next slice.
+
 An outgoing-only local client keeps the workstation off the public Internet.
 A direct OAuth callback on each workstation would distribute Slack secrets
 and require a reachable callback for event delivery. An optional private
