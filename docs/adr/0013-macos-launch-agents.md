@@ -25,11 +25,19 @@ the database-backed task endpoint. On failure, unload the jobs started by
 that invocation and remove the plists it created. Keep any existing jobs
 and all database and configuration state.
 
+Pause records the desired state and disables the service targets in
+launchd before unloading the jobs. A successful start from pause re-enables
+those targets and clears the marker only after the health check passes.
+A failed resume restores the disabled state. Restart serializes unloading
+and startup under the same operation lock. Status distinguishes a healthy
+running service, unloaded jobs, intentional pause, and unhealthy or
+incomplete transitions.
+
 ## Consequences
 
 An explicit start is required after staging and, for a managed database,
 after provisioning. The plists retain absolute release paths. Service
-updates, long-term pause, and uninstall need their own lifecycle changes.
+updates and uninstall need their own lifecycle changes.
 The stop command unloads the jobs for the current session and preserves
 files so they can load on the next login.
 
