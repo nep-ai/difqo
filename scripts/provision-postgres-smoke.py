@@ -1,4 +1,5 @@
 """Run the installed macOS provisioning adapter in disposable homes."""
+from contextlib import ExitStack
 from pathlib import Path
 from tempfile import TemporaryDirectory
 import os
@@ -12,7 +13,7 @@ if len(sys.argv) != 3:
 adapter = Path(sys.argv[1]).resolve(strict=True) / 'bin' / 'provision-postgres-macos'
 pgbin = Path(sys.argv[2]).resolve(strict=True)
 
-with TemporaryDirectory(prefix='difqo-provision-') as scratch:
+with TemporaryDirectory(prefix='difqo-provision-') as scratch, ExitStack() as cleanup:
     work = Path(scratch)
     home = work / 'Synthetic Home'
     external_home = work / 'External Home'
@@ -46,6 +47,14 @@ with TemporaryDirectory(prefix='difqo-provision-') as scratch:
         subprocess.run([*ctl, '-m', 'fast', '-w', 'stop'], env=pg_env, check=True, timeout=35,
                        stdout=subprocess.DEVNULL)
 
+    def stop_if_running():
+        status = subprocess.run([*ctl, 'status'], env=pg_env, capture_output=True, timeout=10)
+        if status.returncode == 0:
+            stop()
+
+    # subprocess timeouts can kill the adapter before its EXIT trap runs.
+    cleanup.callback(stop_if_running)
+
     migration_count = len(list((adapter.parent.parent / 'migrations').glob('*.sql')))
     assert migration_count > 0
     with socket.socket() as blocker:
@@ -68,8 +77,8 @@ with TemporaryDirectory(prefix='difqo-provision-') as scratch:
         )
         return proc.stdout.strip()
 
-    start()
     try:
+        start()
         assert query("SELECT rolsuper FROM pg_roles WHERE rolname = current_user") == 'f'
         assert query("SHOW listen_addresses") == '127.0.0.1'
         assert query("INSERT INTO tasks(goal) VALUES ('keep fixture') RETURNING goal") == 'keep fixture'
@@ -78,7 +87,7 @@ with TemporaryDirectory(prefix='difqo-provision-') as scratch:
         assert 'Applied 0 migration(s)' in output and secret not in output
         assert not list(external_home.iterdir())
     finally:
-        stop()
+        stop_if_running()
 
     assert 'differs from the existing cluster port' in provision(
         pgbin, extra_env={'DIFQO_POSTGRES_PORT': str(55432 if port != 55432 else 55433)}, code=1,
@@ -86,9 +95,9 @@ with TemporaryDirectory(prefix='difqo-provision-') as scratch:
     output = provision(pgbin, extra_env={'DIFQO_POSTGRES_PORT': ''})
     assert 'Applied 0 migration(s)' in output and secret not in output
     assert stopped() and secret_file.read_text().strip() == secret
-    start()
     try:
+        start()
         assert query('SELECT goal FROM tasks') == 'keep fixture'
     finally:
-        stop()
+        stop_if_running()
 print('PostgreSQL provisioning smoke passed: loopback, non-superuser role, private credential, existing DB bypass, occupied-port recovery, and safe rerun.')
