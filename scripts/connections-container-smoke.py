@@ -55,6 +55,11 @@ def wait_for(check, reason):
 
 
 def http(path, method="GET", body=None, headers=None):
+    # Docker can allocate a different host port after restarting a container.
+    published = container("port", relay, "8080/tcp", check=False)
+    if published.returncode != 0 or not published.stdout.strip():
+        return 0, b""
+    origin = "http://" + published.stdout.strip()
     req = Request(origin + path, data=body, headers=headers or {}, method=method)
     try:
         with opener.open(req, timeout=2) as response:
@@ -79,7 +84,6 @@ try:
                      "SELECT count(*) FROM difqo_relay_migrations").stdout.strip() == str(count)
     container("run", "-d", "--network", network, "--name", relay,
               "-p", "127.0.0.1::8080", *flags, image)
-    origin = "http://" + container("port", relay, "8080/tcp").stdout.strip()
     wait_for(lambda: http("/readyz")[0] == 200, "Railway ingress did not become ready")
     assert http("/healthz")[0] == 200
 
