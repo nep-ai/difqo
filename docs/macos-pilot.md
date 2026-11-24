@@ -23,6 +23,12 @@ goal, start a supported Docker or Podman engine, make Git available, and use
 a dedicated Codex sign-in. The steps below show Docker. Use a disposable
 repository and material that is safe to send to the model.
 
+Docker's stock policy can block the nested namespaces required by the Codex
+sandbox. The worker checks sandbox readiness before claiming the goal. If
+preflight fails, use a compatible runtime or an administrator-approved policy
+scoped to the Codex container. See the [runtime and sandbox setup guide](https://github.com/nep-ai/difqo/blob/main/docs/development.md#runtime-selection-and-linux-sandbox-setup)
+before retrying. The queued goal will still be there.
+
 Run these commands from the same artifact directory:
 
 ```sh
@@ -49,7 +55,8 @@ greeting.txt.` Submit the goal `Replace the fixture greeting according to the
 saved decision.` Then run the worker:
 
 ```sh
-"$release/bin/difqo" worker -repo "$fixture" -container-runtime docker \
+runtime=docker  # Use the trusted compatible CLI or wrapper selected above.
+"$release/bin/difqo" worker -repo "$fixture" -container-runtime "$runtime" \
   -codex-image difqo-codex:0.171.0 -codex-home "$auth_home" \
   -artifacts "$root/artifacts" -check 'test "$(cat greeting.txt)" = after'
 ```
