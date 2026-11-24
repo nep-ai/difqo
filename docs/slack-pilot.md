@@ -159,7 +159,7 @@ private `DATABASE_URL` reference and Railway HTTPS ingress targets port
    recorded migrations with matching checksums. For a database initialized
    outside this runner, reconcile the schema and migration ledger separately
    before linking it. A failure blocks deployment. Inspect the failed
-   migration name, verify the database reference, and retry the deployment
+   migration name and SQLSTATE when available, verify the database reference, and retry the deployment
    after fixing the cause. Keep the prior deployment serving if it remains
    compatible. Avoid rollback to an older schema.
 3. After the synthetic health checks pass, attach

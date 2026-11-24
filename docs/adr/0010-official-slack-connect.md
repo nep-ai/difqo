@@ -230,6 +230,27 @@ validates the Slack origin, flow parameters, and relay callback before
 returning a URL. The enrollment credential and pairing proof stay
 server-side.
 
+## Railway pilot deployment
+
+Use Railway for the scoped staging pilot. Its HTTPS edge forwards to the
+Connections container's proxy on `PORT`. Connections itself remains on
+numeric loopback. This keeps provider request handling on the existing
+listener and avoids supervising a separate proxy process or routing
+provider traffic between containers. The proxy forwards raw signed bytes
+without request logging. The staging origin stays fixed for OAuth and
+existing pairings.
+
+Use a dedicated private PostgreSQL service without public TCP exposure.
+The image's pre-deploy command applies embedded relay migrations in a
+transaction. The database advisory lock serializes deploys, and a ledger
+records checksums so redeploys can skip applied migrations and detect
+modified history. This replaces manual sequencing for fresh Railway
+databases. A migration failure blocks the release, and `/readyz` verifies
+schema availability before traffic reaches the new deployment. Keep the
+current schema compatible with the previous binary when rolling back.
+Retire pilot claims and queued bodies before restoring ingress after a
+rollback or database restore.
+
 An outgoing-only local client keeps the workstation off the public Internet.
 A direct OAuth callback on each workstation would distribute Slack secrets
 and require a reachable callback for event delivery. An optional private
