@@ -1,6 +1,7 @@
 """Rehearse the pilot retention and retirement commands in a disposable schema."""
 from pathlib import Path
-from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
+from tempfile import NamedTemporaryFile
+from urllib.parse import parse_qsl, unquote, urlencode, urlsplit, urlunsplit
 from uuid import uuid4
 import os
 import subprocess
@@ -19,8 +20,26 @@ def sql(*args, database=scoped):
 
 
 def operation(name, *args):
-    sql("-v", "app_id=ATEST", "-v", "pilot_scope=TTEST:UTEST", *args,
-        "-f", str(root / "relay" / "operations" / name))
+    host, port = url.hostname, str(url.port or 5432)
+    user, database = unquote(url.username or ""), unquote(url.path.removeprefix("/"))
+    password = unquote(url.password or "")
+    env = os.environ.copy()
+    env.pop("PGPASSWORD", None)
+    env["PGOPTIONS"] = "-csearch_path=" + schema
+    if sslmode := dict(params).get("sslmode"):
+        env["PGSSLMODE"] = sslmode
+    with NamedTemporaryFile(mode="w") as secret:
+        fields = (host, port, database, user, password)
+        secret.write(":".join(field.replace("\\", "\\\\").replace(":", "\\:") for field in fields) + "\n")
+        secret.flush()
+        env["PGPASSFILE"] = secret.name
+        subprocess.run(
+            ["psql", "-XqAt", "--no-password", "--host", host, "--port", port,
+             "--username", user, "--dbname", database, "-v", "ON_ERROR_STOP=1",
+             "-v", "app_id=ATEST", "-v", "pilot_scope=TTEST:UTEST", *args,
+             "-f", str(root / "relay" / "operations" / name)],
+            env=env, capture_output=True, text=True, check=True,
+        )
 
 
 sql("-c", "CREATE SCHEMA " + schema, database=dsn)

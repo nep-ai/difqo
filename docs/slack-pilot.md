@@ -226,13 +226,26 @@ returned to an authenticated local poll. Keep pairing tombstones and event
 IDs for the pilot so retries cannot create duplicate tasks. Apply the
 approved retention policy to backups and any log storage as well.
 
-Use a secret-injected maintenance DSN and the exact configured app and
-workspace/operator IDs. From the checkout, run the following with the
+Run maintenance and restores from an authorized maintenance container in the
+same Railway staging environment, on the private network. Keep PostgreSQL
+without public TCP exposure. Use Railway SSH into the maintenance service
+and connect to the private `RelayPostgres` hostname. Keep that service
+separate from Connections so it remains available while the relay is stopped.
+Restore backups from the same private network and verify the target database
+before running retirement.
+[Railway private networking](https://docs.railway.com/networking/private-networking) ·
+[Railway SSH](https://docs.railway.com/cli/ssh)
+
+Set `PGHOST`, `PGPORT`, `PGUSER`, and `PGDATABASE` to the private hostname,
+port, maintenance role, and database name. Supply the password through a
+secret-injected `PGPASSFILE` readable only by the maintenance user (mode
+`0600`). Use the exact configured app and workspace/operator IDs. From the checkout, run the following with the
 approved retention hours (24 shown).
 
 ```sh
 pilot_scope="${DIFQO_SLACK_WORKSPACE_ID}:${DIFQO_SLACK_OPERATOR_ID}"
-psql -X --dbname "$DIFQO_RELAY_DATABASE_URL" -v ON_ERROR_STOP=1 \
+psql -X --no-password --host "$PGHOST" --port "$PGPORT" \
+  --username "$PGUSER" --dbname "$PGDATABASE" -v ON_ERROR_STOP=1 \
   -v app_id="$DIFQO_SLACK_APP_ID" -v pilot_scope="$pilot_scope" \
   -v retention_hours=24 -f relay/operations/expire-slack-goals.sql
 ```
@@ -243,7 +256,8 @@ pilot scope and scrub queued bodies in one transaction.
 
 ```sh
 pilot_scope="${DIFQO_SLACK_WORKSPACE_ID}:${DIFQO_SLACK_OPERATOR_ID}"
-psql -X --dbname "$DIFQO_RELAY_DATABASE_URL" -v ON_ERROR_STOP=1 \
+psql -X --no-password --host "$PGHOST" --port "$PGPORT" \
+  --username "$PGUSER" --dbname "$PGDATABASE" -v ON_ERROR_STOP=1 \
   -v app_id="$DIFQO_SLACK_APP_ID" -v pilot_scope="$pilot_scope" \
   -f relay/operations/retire-slack-pilot.sql
 ```
