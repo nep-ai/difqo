@@ -37,47 +37,16 @@ type envelope struct {
 	} `json:"connection_info"`
 }
 
-type slackCallback struct {
-	Type          string `json:"type"`
-	EventID       string `json:"event_id"`
-	AppID         string `json:"api_app_id"`
-	WorkspaceID   string `json:"team_id"`
-	ExternalShare bool   `json:"is_ext_shared_channel"`
-	Event         struct {
-		Type        string `json:"type"`
-		Channel     string `json:"channel"`
-		ChannelType string `json:"channel_type"`
-		User        string `json:"user"`
-		UserTeam    string `json:"user_team"`
-		Team        string `json:"team"`
-		BotID       string `json:"bot_id"`
-		AppID       string `json:"app_id"`
-		Subtype     string `json:"subtype"`
-		Text        string `json:"text"`
-	} `json:"event"`
-}
-
 func socketGoal(binding store.SlackBinding, payload json.RawMessage) (eventID, goal string) {
-	var callback slackCallback
-	if json.Unmarshal(payload, &callback) != nil || callback.Type != "event_callback" || callback.ExternalShare {
+	var callback Callback
+	if json.Unmarshal(payload, &callback) != nil {
 		return "", ""
 	}
-	message := callback.Event
-	if (message.Team != "" && message.Team != callback.WorkspaceID) ||
-		(message.UserTeam != "" && message.UserTeam != callback.WorkspaceID) {
+	source, goal := callback.Goal()
+	if source != binding {
 		return "", ""
 	}
-	bot := message.BotID != "" || message.AppID != ""
-	value, err := authorizedGoal(binding, event{
-		SlackBinding: store.SlackBinding{AppID: callback.AppID, WorkspaceID: callback.WorkspaceID,
-			OperatorID: message.User, ChannelID: message.Channel},
-		EventID: callback.EventID, Type: message.Type, ChannelType: message.ChannelType,
-		Bot: &bot, Subtype: message.Subtype, Text: message.Text,
-	})
-	if err != nil {
-		return "", ""
-	}
-	return callback.EventID, value
+	return callback.EventID, goal
 }
 
 func RunSocketMode(ctx context.Context, tasks store.Tasks, binding store.SlackBinding, token string) error {

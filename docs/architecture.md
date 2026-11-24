@@ -14,7 +14,8 @@ flowchart LR
     SlackSocket -->|"Map private DM goal events"| SlackBinding["Persisted Slack binding"]
     Server -->|"Poll official pairing status in tests"| SlackFixture["Opt-in loopback relay fixture"]
     SlackFixture <-->|"Separate identity and installation callbacks, DM lookup"| SlackSimulator["Synthetic Slack endpoints"]
-    SlackFixture -->|"Persist app-scoped pairing and callback state"| SlackRelayDB[("Separate relay PostgreSQL database")]
+    SlackSimulator -->|"Signed URL challenge and private DM events"| SlackFixture
+    SlackFixture -->|"Persist pairing, callback, claim, and deduplicated events"| SlackRelayDB[("Separate relay PostgreSQL database")]
     Server -->|"Persist Slack connection mode and generation"| Postgres
     SlackImport -->|"Check the linked app, workspace, operator, and DM"| SlackBinding
     SlackBinding -->|"Save event identity and local task atomically"| Postgres
@@ -108,7 +109,7 @@ See [ADR 0005](adr/0005-specialist-configuration.md) and
 ```mermaid
 flowchart LR
     Browser["React + Vite web app"] --> Intake
-    Slack["Slack"] <-->|"Official app OAuth and signed DM events"| SlackRelay["Proposed hosted Slack relay"]
+    Slack["Slack"] <-->|"Official app OAuth and signed DM events"| SlackRelay["Slack provider in planned Connections service"]
     SlackRelay <-->|"Outbound pairing and delivery receipts"| SlackConnector["Local official Slack connector"]
     Slack <-->|"Optional private app over Socket Mode"| SlackSocket["Local private Slack connector"]
     SlackConnector --> Intake

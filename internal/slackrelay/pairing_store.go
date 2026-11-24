@@ -26,11 +26,11 @@ type pairingStore struct {
 }
 
 type pairing struct {
-	proofHash                 []byte
-	expired, revoked, pending bool
-	identity                  identity
-	workspace, channel        string
-	sealedToken               []byte
+	proofHash                          []byte
+	expired, revoked, pending, claimed bool
+	identity                           identity
+	workspace, channel                 string
+	sealedToken                        []byte
 }
 
 func (p pairing) terminal() bool { return p.expired || p.revoked }
@@ -48,16 +48,16 @@ func (s pairingStore) lock(ctx context.Context, tx pgx.Tx, id string) (pairing, 
 	var p pairing
 	err := tx.QueryRow(ctx, `
 		WITH locked AS (
-			SELECT proof_hash, expires_at, revoked, approval_pending, verified_workspace,
+			SELECT proof_hash, expires_at, revoked, approval_pending, claimed, verified_workspace,
 			       verified_operator, installed_workspace, dm_channel, sealed_bot_token
 			FROM slack_relay_pairings
 			WHERE app_id = $1 AND id = $2
 			FOR UPDATE
 		)
-		SELECT proof_hash, expires_at <= clock_timestamp(), revoked, approval_pending,
+		SELECT proof_hash, NOT claimed AND expires_at <= clock_timestamp(), revoked, approval_pending, claimed,
 		       verified_workspace, verified_operator, installed_workspace, dm_channel, sealed_bot_token
 		FROM locked
-	`, s.appID, id).Scan(&p.proofHash, &p.expired, &p.revoked, &p.pending,
+	`, s.appID, id).Scan(&p.proofHash, &p.expired, &p.revoked, &p.pending, &p.claimed,
 		&p.identity.Workspace, &p.identity.Operator, &p.workspace, &p.channel, &p.sealedToken)
 	return p, err
 }
@@ -274,7 +274,7 @@ func (s pairingStore) revoke(ctx context.Context, id, proof string) error {
 // Retain a tombstone so PUT cannot re-register a retired pairing ID.
 func (s pairingStore) retire(ctx context.Context, tx pgx.Tx, id string) error {
 	_, err := tx.Exec(ctx, `
-		UPDATE slack_relay_pairings SET revoked = true, approval_pending = false, verified_workspace = '',
+		UPDATE slack_relay_pairings SET revoked = true, approval_pending = false, claimed = false, verified_workspace = '',
 		    verified_operator = '', installed_workspace = '', dm_channel = '', sealed_bot_token = NULL
 		WHERE app_id = $1 AND id = $2
 	`, s.appID, id)
@@ -282,5 +282,11 @@ func (s pairingStore) retire(ctx context.Context, tx pgx.Tx, id string) error {
 		return err
 	}
 	_, err = tx.Exec(ctx, "DELETE FROM slack_relay_oauth_flows WHERE app_id = $1 AND pairing_id = $2", s.appID, id)
+	if err != nil {
+		return err
+	}
+	_, err = tx.Exec(ctx, `
+		UPDATE slack_relay_events SET goal = NULL WHERE app_id = $1 AND pairing_id = $2 AND goal IS NOT NULL
+	`, s.appID, id)
 	return err
 }
