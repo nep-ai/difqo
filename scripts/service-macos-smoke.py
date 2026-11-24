@@ -26,12 +26,23 @@ with TemporaryDirectory(prefix='difqo-service-') as scratch:
 set -eu
 case "$1" in
   print)
-    case "$2" in */com.difqo.*) [ -e "$FIXTURE/${2##*/}" ] ;; *) exit 0 ;; esac
+    case "$2" in */com.difqo.*) ;; *) exit 0 ;; esac
+    label=${2##*/}
+    if [ -e "$FIXTURE/$label.unloading" ]; then
+      remaining=$(cat "$FIXTURE/$label.unloading")
+      if [ "$remaining" -eq 0 ]; then
+        rm "$FIXTURE/$label" "$FIXTURE/$label.unloading"
+      else
+        printf '%s\n' "$((remaining - 1))" > "$FIXTURE/$label.unloading"
+      fi
+    fi
+    [ -e "$FIXTURE/$label" ]
     ;;
   bootstrap)
     label=${3##*/}
     label=${label%.plist}
     [ ! -e "$FIXTURE/$label.disabled" ]
+    [ ! -e "$FIXTURE/$label" ]
     printf '%s\n' "$label" >> "$FIXTURE/starts"
     touch "$FIXTURE/$label"
     if [ "${CANCEL_BOOTSTRAP:-}" = "$label" ]; then kill -TERM "$PPID"; fi
@@ -46,7 +57,11 @@ case "$1" in
   bootout)
     [ "${FAIL_BOOTOUT:-}" != "${2##*/}" ]
     printf '%s\n' "${2##*/}" >> "$FIXTURE/stops"
-    rm "$FIXTURE/${2##*/}"
+    if [ -n "${DELAY_UNLOAD:-}" ]; then
+      printf '%s\n' "$DELAY_UNLOAD" > "$FIXTURE/${2##*/}.unloading"
+    else
+      rm "$FIXTURE/${2##*/}"
+    fi
     ;;
   *) exit 1 ;;
 esac
@@ -136,6 +151,12 @@ printf '%s\n' "$1" >> "$FIXTURE/cli"
     assert 'Paused' in run(env, adapter, 'status', ok=False)
     assert (work / 'com.difqo.server.disabled').is_file()
     assert not (work / 'com.difqo.postgresql.disabled').exists()
+    disabled_bootstrap = subprocess.run(
+        [tools / 'launchctl', 'bootstrap', f'gui/{os.getuid()}', server_plist],
+        env=env, capture_output=True, timeout=5,
+    )
+    assert disabled_bootstrap.returncode != 0
+    assert not (work / 'com.difqo.server').exists()
     assert 'did not become healthy' in run(env, adapter, 'start', ok=False, NO_HEALTH='1')
     assert 'Paused' in run(env, adapter, 'status', ok=False)
     assert (work / 'com.difqo.server.disabled').is_file()
@@ -187,7 +208,8 @@ printf '%s\n' "$1" >> "$FIXTURE/cli"
     assert 'running' in run(env, adapter, 'restart')
     assert 'running' in run(env, adapter, 'status')
     assert not list(work.glob('*.disabled'))
-    assert 'running' in run(env, adapter, 'restart')
+    assert 'running' in run(env, adapter, 'restart', DELAY_UNLOAD='3')
+    assert not list(work.glob('*.unloading'))
     assert (work / 'stops').read_text().splitlines()[-2:] == ['com.difqo.server', 'com.difqo.postgresql']
     assert (work / 'starts').read_text().splitlines()[-2:] == ['com.difqo.postgresql', 'com.difqo.server']
     mode_file = home / 'Library/Application Support/Difqo/service/mode'
