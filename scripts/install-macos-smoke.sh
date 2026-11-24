@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-if [ "$#" -ne 2 ]; then
-  printf 'Usage: bash scripts/install-macos-smoke.sh VERSION BUNDLE_DIR\n' >&2
+if [ "$#" -lt 2 ] || [ "$#" -gt 3 ] || { [ "$#" -eq 3 ] && [ "$3" != --provision ]; }; then
+  printf 'Usage: bash scripts/install-macos-smoke.sh VERSION BUNDLE_DIR [--provision]\n' >&2
   exit 2
 fi
 
@@ -80,6 +80,9 @@ test -x "$destination/bin/difqo"
 test -f "$destination/web/index.html"
 test -f "$destination/migrations/0001_tasks.sql"
 test "$(cat "$destination/VERSION")" = "$version"
+if [ "${3:-}" = --provision ]; then
+  python3 "$(dirname "$installer")/provision-postgres-smoke.py" "$destination" "$destination/postgresql/bin"
+fi
 mkdir -p "$root/releases/older-version"
 printf 'keep settings\n' > "$root/settings.env"
 printf 'keep older release\n' > "$root/releases/older-version/sentinel"

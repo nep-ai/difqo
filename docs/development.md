@@ -101,12 +101,19 @@ database on a clean machine and the provisioning boundary.
 ### Provision a private PostgreSQL cluster on Apple silicon
 
 From an installed release containing the runtime, run the macOS adapter
-without arguments. To use supplied PostgreSQL 18 binaries, pass a trusted
-`bin` directory with `postgres`, `initdb`, `pg_ctl`, and `psql`:
+without arguments and set the binary directory for the manual start steps:
 
 ```sh
-/bin/bash ./bin/provision-postgres-macos  # bundled runtime
-/bin/bash ./bin/provision-postgres-macos "$postgres_bin"  # supplied runtime
+postgres_bin="$PWD/postgresql/bin"
+/bin/bash ./bin/provision-postgres-macos
+```
+
+For supplied PostgreSQL 18 binaries, set `postgres_bin` to their trusted
+`bin` directory and pass it explicitly:
+
+```sh
+postgres_bin=/path/to/postgresql-18/bin
+/bin/bash ./bin/provision-postgres-macos "$postgres_bin"
 ```
 
 It stores data and a mode-0600 generated credential in

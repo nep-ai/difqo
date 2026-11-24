@@ -81,5 +81,4 @@ jobs:
             cmp "$migration" "extracted/migrations/$(basename "$migration")"
           done
           test "$(cat extracted/VERSION)" = v0.0.0-ci
-          PATH=/usr/bin:/bin:/usr/sbin:/sbin /bin/bash "$GITHUB_WORKSPACE/scripts/install-macos-smoke.sh" v0.0.0-ci "$bundle"
-          python3 "$GITHUB_WORKSPACE/scripts/provision-postgres-smoke.py" "$PWD/extracted" "$PWD/extracted/postgresql/bin"
+          PATH=/usr/bin:/bin:/usr/sbin:/sbin /bin/bash "$GITHUB_WORKSPACE/scripts/install-macos-smoke.sh" v0.0.0-ci "$bundle" --provision
