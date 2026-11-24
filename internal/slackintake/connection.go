@@ -61,11 +61,15 @@ func connectionView(s store.SlackConnection) ConnectionView {
 		if v.State == "ready_to_link" || s.Mode == "official" {
 			v.Binding = &p.Binding
 		}
-		if s.Mode != "official" && p.State != "reconnect_required" && !time.Now().Before(p.Expires) {
+		if s.Mode != "official" && !transitionPending(p.State) && p.State != "reconnect_required" && !time.Now().Before(p.Expires) {
 			v.State, v.Binding = "expired", nil
 		}
 	}
 	return v
+}
+
+func transitionPending(state string) bool {
+	return state == "claiming" || state == "claim_rejected" || state == "disconnecting"
 }
 
 func (c *Connections) Status(ctx context.Context) (ConnectionView, error) {
@@ -76,6 +80,9 @@ func (c *Connections) Status(ctx context.Context) (ConnectionView, error) {
 func (c *Connections) Begin(ctx context.Context) (ConnectionView, error) {
 	s, err := c.tasks.UpdateSlackConnection(ctx, func(s *store.SlackConnection) error {
 		if s.Mode == "official" || (s.Mode == "private" && s.Private != nil) {
+			return store.ErrSlackTransition
+		}
+		if s.Pairing != nil && transitionPending(s.Pairing.State) {
 			return store.ErrSlackTransition
 		}
 		if s.Pairing != nil && s.Pairing.Relay == c.origin && s.Pairing.State != "reconnect_required" &&
@@ -107,12 +114,7 @@ type relayStatus struct {
 
 func (c *Connections) relayStatus(ctx context.Context, p *store.SlackPairing) (relayStatus, error) {
 	var status relayStatus
-	req, err := http.NewRequestWithContext(ctx, http.MethodPut, c.origin+"/pairings/"+p.ID, nil)
-	if err != nil {
-		return status, ErrRelayUnavailable
-	}
-	req.Header.Set("Authorization", "Bearer "+p.Proof)
-	res, err := c.client.Do(req)
+	res, err := c.relayRequest(ctx, http.MethodPut, p, "", nil)
 	if err != nil {
 		return status, ErrRelayUnavailable
 	}
@@ -157,7 +159,7 @@ func (c *Connections) Refresh(ctx context.Context, id string) (ConnectionView, e
 		return ConnectionView{}, err
 	}
 	p := before.Pairing
-	if p == nil || p.ID != id || p.Relay != c.origin || p.State == "reconnect_required" ||
+	if p == nil || p.ID != id || p.Relay != c.origin || p.State == "reconnect_required" || transitionPending(p.State) ||
 		(before.Mode != "official" && !time.Now().Before(p.Expires)) {
 		return connectionView(before), store.ErrSlackTransition
 	}
@@ -174,9 +176,7 @@ func (c *Connections) Refresh(ctx context.Context, id string) (ConnectionView, e
 			return nil
 		}
 		if status.State == "reconnect_required" {
-			s.Mode = "disconnected"
-			s.Generation++
-			s.Pairing = &store.SlackPairing{ID: p.ID, State: "reconnect_required"}
+			requireReconnect(s)
 			return nil
 		}
 		if s.Mode == "official" {
@@ -200,51 +200,51 @@ func (c *Connections) Refresh(ctx context.Context, id string) (ConnectionView, e
 }
 
 func (c *Connections) Confirm(ctx context.Context, id string, binding store.SlackBinding) (ConnectionView, error) {
-	before, err := c.tasks.SlackConnection(ctx)
-	if err != nil {
-		return ConnectionView{}, err
-	}
-	p := before.Pairing
-	if p == nil || p.ID != id || p.Relay != c.origin || p.Binding != binding {
-		return connectionView(before), store.ErrSlackTransition
-	}
-	if before.Mode != "official" {
-		if p.State != "ready_to_link" {
-			return connectionView(before), store.ErrSlackTransition
-		}
-		if view, err := c.Refresh(ctx, id); err != nil {
-			return view, err
-		}
-	}
-	s, err := c.tasks.UpdateSlackConnection(ctx, func(s *store.SlackConnection) error {
+	state, err := c.tasks.UpdateSlackConnection(ctx, func(s *store.SlackConnection) error {
 		p := s.Pairing
 		if p == nil || p.ID != id || p.Relay != c.origin || p.Binding != binding {
 			return store.ErrSlackTransition
 		}
-		if s.Mode == "official" {
+		if s.Mode == "official" || p.State == "claiming" {
 			return nil
 		}
 		if s.Mode != "disconnected" || p.State != "ready_to_link" || !time.Now().Before(p.Expires) {
 			return store.ErrSlackTransition
 		}
-		s.Mode, p.State = "official", "connected"
-		s.Generation++
+		p.State = "claiming"
 		return nil
 	})
-	return connectionView(s), err
+	if err != nil || state.Pairing.RelayClaimed {
+		return connectionView(state), err
+	}
+	return c.finishClaim(ctx, state)
 }
 
 func (c *Connections) Disconnect(ctx context.Context, generation int64, id string) (ConnectionView, error) {
-	s, err := c.tasks.UpdateSlackConnection(ctx, func(s *store.SlackConnection) error {
-		if s.Generation != generation || (s.Pairing != nil && s.Pairing.ID != id) ||
-			(s.Pairing == nil && id != "") {
+	state, err := c.tasks.UpdateSlackConnection(ctx, func(s *store.SlackConnection) error {
+		p := s.Pairing
+		if s.Generation != generation || (p != nil && p.ID != id) || (p == nil && id != "") {
 			return store.ErrSlackTransition
 		}
-		s.Mode, s.Pairing = "disconnected", nil
+		if p != nil && p.State == "disconnecting" {
+			return nil
+		}
+		if p != nil && p.Proof != "" && p.Relay != c.origin {
+			return store.ErrSlackTransition
+		}
+		s.Mode = "disconnected"
 		s.Generation++
+		if p == nil || p.Proof == "" {
+			s.Pairing = nil
+		} else {
+			p.State = "disconnecting"
+		}
 		return nil
 	})
-	return connectionView(s), err
+	if err != nil || state.Pairing == nil {
+		return connectionView(state), err
+	}
+	return c.finishDisconnect(ctx, state)
 }
 
 func (c *Connections) EnablePrivate(ctx context.Context, generation int64) (ConnectionView, error) {

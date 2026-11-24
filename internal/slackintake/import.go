@@ -70,10 +70,14 @@ func (incoming event) goal() (string, error) {
 	}
 	goal, ok := strings.CutPrefix(strings.TrimSpace(incoming.Text), "goal ")
 	goal = strings.TrimSpace(goal)
-	if !ok || goal == "" || strings.ContainsRune(goal, 0) || utf8.RuneCountInString(goal) > 4096 {
+	if !ok || !validGoal(goal) {
 		return "", errors.New("use goal followed by a task of up to 4096 characters")
 	}
 	return goal, nil
+}
+
+func validGoal(goal string) bool {
+	return goal != "" && goal == strings.TrimSpace(goal) && !strings.ContainsRune(goal, 0) && utf8.RuneCountInString(goal) <= 4096
 }
 
 func readEvent(ctx context.Context, input io.Reader) (event, error) {

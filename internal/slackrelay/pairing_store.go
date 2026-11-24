@@ -263,7 +263,9 @@ func (s pairingStore) finishDM(ctx context.Context, id, proof string, channel st
 }
 
 func (s pairingStore) revoke(ctx context.Context, id, proof string) error {
-	return s.owned(ctx, id, proof, false, func(tx pgx.Tx, p pairing) error {
+	// A disconnect can beat the initial registration request. Persist the
+	// tombstone even in that order so the cancelled ID cannot register later.
+	return s.owned(ctx, id, proof, true, func(tx pgx.Tx, p pairing) error {
 		if p.revoked {
 			return nil
 		}

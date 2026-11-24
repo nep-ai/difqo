@@ -53,7 +53,7 @@ func run(args []string) error {
 	var options execution.Options
 	switch args[0] {
 	case "server":
-		flags.StringVar(&slackFixture, "slack-relay-fixture", "", "enable local Slack lifecycle tests with an HTTP loopback relay fixture")
+		flags.StringVar(&slackFixture, "slack-relay-fixture", "", "enable local Slack lifecycle and delivery with an HTTP loopback relay fixture")
 		flags.StringVar(&projectsPath, "projects", "", "path to the local project catalog JSON file")
 		flags.StringVar(&webPath, "web", "", "path to the built local web UI")
 		flags.StringVar(&artifactPath, "artifacts", "", "absolute path to the worker artifact directory")
@@ -178,6 +178,11 @@ func run(args []string) error {
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       10 * time.Second,
 		WriteTimeout:      15 * time.Second,
+	}
+	if slack != nil {
+		slackCtx, stopSlack := context.WithCancel(context.Background())
+		defer stopSlack()
+		go slack.Run(slackCtx)
 	}
 	log.Printf("Difqo API listening on http://%s", address)
 	return server.ListenAndServe()
