@@ -9,6 +9,7 @@ import (
 	"os"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -46,6 +47,7 @@ func TestOfficialSlackDelivery(t *testing.T) {
 	firstReceipt, lateRead, releaseRead := make(chan struct{}), make(chan struct{}), make(chan struct{})
 	firstClaim, firstDelete := true, true
 	var mu sync.Mutex
+	var pollUnavailable atomic.Bool
 	f.wrapRelay = func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			mu.Lock()
@@ -83,6 +85,10 @@ func TestOfficialSlackDelivery(t *testing.T) {
 				return
 			}
 			if r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/events") {
+				if pollUnavailable.Load() {
+					w.WriteHeader(http.StatusServiceUnavailable)
+					return
+				}
 				reply := httptest.NewRecorder()
 				next.ServeHTTP(reply, r)
 				if strings.Contains(reply.Body.String(), late.EventID) {
@@ -129,9 +135,19 @@ func TestOfficialSlackDelivery(t *testing.T) {
 	f.request("GET", path, randomSecret(), nil, http.StatusUnauthorized, nil)
 	f.request("PUT", path+"/"+late.EventID, randomSecret(), nil, http.StatusUnauthorized, nil)
 	f.request("PUT", path+"/"+late.EventID, f.proof, nil, http.StatusConflict, nil)
-	f.webhook(event, http.StatusOK)
+	pollUnavailable.Store(true)
 	stop := runDelivery(ctx, connections)
 	defer stop()
+	waitDelivery(t, func() bool {
+		v, err := connections.Status(ctx)
+		return err == nil && v.State == "reconnecting" && v.Generation == view.Generation
+	})
+	pollUnavailable.Store(false)
+	waitDelivery(t, func() bool {
+		v, err := connections.Status(ctx)
+		return err == nil && v.State == "connected" && v.Generation == view.Generation
+	})
+	f.webhook(event, http.StatusOK)
 	awaitDelivery(t, firstReceipt)
 	stop()
 	if f.queueCount(f.id) != 1 {

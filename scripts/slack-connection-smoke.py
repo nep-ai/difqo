@@ -67,6 +67,9 @@ class Relay(BaseHTTPRequestHandler):
         if pair not in claimed or proofs.get(pair) != self.headers.get('Authorization'):
             self.send_error(403)
             return
+        if not stage:
+            self.send_error(503)
+            return
         body = json.dumps({'binding': binding, 'events': []}).encode()
         self.send_response(200)
         self.send_header('Content-Length', str(len(body)))

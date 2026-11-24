@@ -100,34 +100,30 @@ func (c *Connections) sync(ctx context.Context) error {
 
 func (c *Connections) receive(ctx context.Context, state store.SlackConnection) error {
 	p := state.Pairing
-	res, err := c.relayRequest(ctx, http.MethodGet, p, "/events", nil)
-	if err != nil {
-		return err
+	batch, pollErr := c.readDeliveries(ctx, p)
+	next := "connected"
+	if pollErr != nil {
+		next = "reconnecting"
 	}
-	defer res.Body.Close()
-	if res.StatusCode == http.StatusConflict {
+	retired := errors.Is(pollErr, store.ErrSlackTransition)
+	if retired || next != p.State {
 		_, err := c.tasks.UpdateSlackConnection(ctx, func(current *store.SlackConnection) error {
 			if !samePairing(current, state) {
 				return store.ErrSlackTransition
 			}
-			requireReconnect(current)
+			if retired {
+				requireReconnect(current)
+			} else {
+				current.Pairing.State = next
+			}
 			return nil
 		})
-		return err
-	}
-	var batch DeliveryBatch
-	limited := &io.LimitedReader{R: res.Body, N: 256<<10 + 1}
-	decoder := json.NewDecoder(limited)
-	decoder.DisallowUnknownFields()
-	if res.StatusCode != http.StatusOK || decoder.Decode(&batch) != nil ||
-		decoder.Decode(new(any)) != io.EOF || limited.N == 0 ||
-		batch.Binding != p.Binding || len(batch.Events) > DeliveryLimit {
-		return ErrRelayUnavailable
-	}
-	for _, event := range batch.Events {
-		if !eventIDPattern.MatchString(event.EventID) || !validGoal(event.Goal) {
-			return ErrRelayUnavailable
+		if err != nil || retired {
+			return err
 		}
+	}
+	if pollErr != nil {
+		return pollErr
 	}
 	for _, event := range batch.Events {
 		_, err := c.tasks.ImportOfficialSlack(ctx, state.Generation, p.ID, p.Binding, event.EventID, event.Goal)
@@ -139,6 +135,32 @@ func (c *Connections) receive(ctx context.Context, state store.SlackConnection) 
 		}
 	}
 	return nil
+}
+
+func (c *Connections) readDeliveries(ctx context.Context, p *store.SlackPairing) (DeliveryBatch, error) {
+	var batch DeliveryBatch
+	res, err := c.relayRequest(ctx, http.MethodGet, p, "/events", nil)
+	if err != nil {
+		return batch, err
+	}
+	defer res.Body.Close()
+	if res.StatusCode == http.StatusConflict {
+		return batch, store.ErrSlackTransition
+	}
+	limited := &io.LimitedReader{R: res.Body, N: 256<<10 + 1}
+	decoder := json.NewDecoder(limited)
+	decoder.DisallowUnknownFields()
+	if res.StatusCode != http.StatusOK || decoder.Decode(&batch) != nil ||
+		decoder.Decode(new(any)) != io.EOF || limited.N == 0 ||
+		batch.Binding != p.Binding || len(batch.Events) > DeliveryLimit {
+		return batch, ErrRelayUnavailable
+	}
+	for _, event := range batch.Events {
+		if !eventIDPattern.MatchString(event.EventID) || !validGoal(event.Goal) {
+			return batch, ErrRelayUnavailable
+		}
+	}
+	return batch, nil
 }
 
 func samePairing(current *store.SlackConnection, expected store.SlackConnection) bool {
