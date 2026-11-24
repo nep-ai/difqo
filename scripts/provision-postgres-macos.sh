@@ -12,6 +12,9 @@ difqo="$(cd "$(dirname "$0")" && pwd)/difqo"
 if [ -n "${DIFQO_DATABASE_URL:-}" ]; then
   exec "$difqo" setup-database "$@"
 fi
+if [ "$#" -eq 0 ] && [ -d "$(dirname "$difqo")/../postgresql/bin" ]; then
+  set -- "$(dirname "$difqo")/../postgresql/bin"
+fi
 [ "$#" -eq 1 ] || fail 'Supply the trusted PostgreSQL 18 bin directory, or set DIFQO_DATABASE_URL for an existing database.'
 [ "$(uname -s)" = Darwin ] && [ "$(uname -m)" = arm64 ] || fail 'Local provisioning requires Apple silicon macOS.'
 [[ "${HOME:-}" == /* && "$HOME" != / && -d "$HOME" ]] || fail 'HOME must be an existing per-user directory.'
