@@ -12,6 +12,8 @@ if len(sys.argv) != 3:
     raise SystemExit('Usage: python3 scripts/provision-postgres-smoke.py RELEASE_DIR POSTGRES_BIN_DIR')
 adapter = Path(sys.argv[1]).resolve(strict=True) / 'bin' / 'provision-postgres-macos'
 pgbin = Path(sys.argv[2]).resolve(strict=True)
+bundled_bin = adapter.parent.parent / 'postgresql' / 'bin'
+runtime_args = () if pgbin == bundled_bin else (pgbin,)
 
 with TemporaryDirectory(prefix='difqo-provision-') as scratch, ExitStack() as cleanup:
     work = Path(scratch)
@@ -60,9 +62,9 @@ with TemporaryDirectory(prefix='difqo-provision-') as scratch, ExitStack() as cl
     with socket.socket() as blocker:
         blocker.bind(('127.0.0.1', port))
         blocker.listen(1)
-        assert 'Could not start the private cluster' in provision(pgbin, code=1)
+        assert 'Could not start the private cluster' in provision(*runtime_args, code=1)
         assert stopped()
-    assert f'Applied {migration_count} migration(s)' in provision(pgbin)
+    assert f'Applied {migration_count} migration(s)' in provision(*runtime_args)
     assert stopped()
     secret_file = root / 'password'
     assert secret_file.stat().st_mode & 0o777 == 0o600
@@ -82,7 +84,7 @@ with TemporaryDirectory(prefix='difqo-provision-') as scratch, ExitStack() as cl
         assert query("SELECT rolsuper FROM pg_roles WHERE rolname = current_user") == 'f'
         assert query("SHOW listen_addresses") == '127.0.0.1'
         assert query("INSERT INTO tasks(goal) VALUES ('keep fixture') RETURNING goal") == 'keep fixture'
-        assert 'Stop the Difqo-managed' in provision(pgbin, code=1)
+        assert 'Stop the Difqo-managed' in provision(*runtime_args, code=1)
         output = provision(extra_env={'HOME': str(external_home), 'DIFQO_DATABASE_URL': dsn})
         assert 'Applied 0 migration(s)' in output and secret not in output
         assert not list(external_home.iterdir())
@@ -90,9 +92,9 @@ with TemporaryDirectory(prefix='difqo-provision-') as scratch, ExitStack() as cl
         stop_if_running()
 
     assert 'differs from the existing cluster port' in provision(
-        pgbin, extra_env={'DIFQO_POSTGRES_PORT': str(55432 if port != 55432 else 55433)}, code=1,
+        *runtime_args, extra_env={'DIFQO_POSTGRES_PORT': str(55432 if port != 55432 else 55433)}, code=1,
     )
-    output = provision(pgbin, extra_env={'DIFQO_POSTGRES_PORT': ''})
+    output = provision(*runtime_args, extra_env={'DIFQO_POSTGRES_PORT': ''})
     assert 'Applied 0 migration(s)' in output and secret not in output
     assert stopped() and secret_file.read_text().strip() == secret
     try:

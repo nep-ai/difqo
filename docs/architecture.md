@@ -8,6 +8,7 @@ flowchart LR
     Operator -->|"Prepare an existing database before starting Difqo"| Setup["Portable database setup CLI"]
     Setup -->|"Apply bundle migrations and record checksums atomically"| Postgres
     Operator -->|"Optionally provision on Apple silicon"| Provision["macOS PostgreSQL adapter"]
+    Bundle["Verified Apple silicon release"] -->|"Optional relocatable PostgreSQL runtime"| Provision
     Provision -->|"Initialize private loopback cluster"| Postgres
     Provision -->|"Run the same migration command"| Setup
     Operator -->|"Poll an enrolled repository"| GitHubIntake["Local GitHub intake command"]
@@ -77,7 +78,7 @@ default through a relay that can reuse the local intake rules. See
 
 The installed CLI verifies connectivity to the operator-selected PostgreSQL
 database and applies the bundled migrations and their history in one
-transaction. On Apple silicon, the release adapter uses an operator-supplied
+transaction. On Apple silicon, the release adapter uses a bundled or operator-supplied
 PostgreSQL 18 binary directory to provision a private loopback cluster and
 calls the same CLI to set up the database. See
 [ADR 0011](adr/0011-portable-database-setup.md).

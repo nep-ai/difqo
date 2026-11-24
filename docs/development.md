@@ -19,6 +19,11 @@ database, set `DIFQO_DATABASE_URL` and run `bin/difqo server -web web` from
 the extracted directory. Staging the bundle leaves database initialization and
 service registration to separate steps. CI builds and inspects the bundle without publishing.
 
+Package CI builds an optional relocatable PostgreSQL runtime from the pinned
+upstream source archive and supplies its staging directory as the third
+argument to `package-macos.sh`. This adds `postgresql/` to the same verified
+release archive. See [ADR 0012](adr/0012-postgresql-runtime-source.md).
+
 ## Verify the installer bootstrap
 
 The bootstrap stages a pinned, locally supplied release for the current user.
@@ -48,10 +53,8 @@ existing settings, data, and versions in place.
 
 The next installer slices are reviewed separately:
 
-1. **PostgreSQL distribution and other platform adapters.** Select a trusted
-   source for PostgreSQL 18 binaries on a clean Mac and implement provisioning
-   for Debian and native Windows. The Apple silicon adapter below accepts
-   an existing set of PostgreSQL binaries.
+1. **Other platform adapters.** Select and verify a PostgreSQL acquisition path
+   for Debian and native Windows.
 2. **Per-user service.** Register a LaunchAgent for the configured server,
    wait for loopback health, and open the UI. Verify restart, rerun,
    update, and uninstall behavior while preserving data.
@@ -97,11 +100,22 @@ database on a clean machine and the provisioning boundary.
 
 ### Provision a private PostgreSQL cluster on Apple silicon
 
-From an installed release, point the macOS adapter at a trusted PostgreSQL 18
-`bin` directory containing `postgres`, `initdb`, `pg_ctl`, and `psql`:
+From an installed release containing the runtime, run the macOS adapter
+without arguments and set the binary directory for the manual start steps.
+Both examples clear any inherited `DIFQO_DATABASE_URL` for the provisioning
+command so the adapter creates a private cluster:
 
 ```sh
-/bin/bash ./bin/provision-postgres-macos "$postgres_bin"
+postgres_bin="$PWD/postgresql/bin"
+env -u DIFQO_DATABASE_URL /bin/bash ./bin/provision-postgres-macos
+```
+
+For supplied PostgreSQL 18 binaries, set `postgres_bin` to their trusted
+`bin` directory and pass it explicitly:
+
+```sh
+postgres_bin=/path/to/postgresql-18/bin
+env -u DIFQO_DATABASE_URL /bin/bash ./bin/provision-postgres-macos "$postgres_bin"
 ```
 
 It stores data and a mode-0600 generated credential in
