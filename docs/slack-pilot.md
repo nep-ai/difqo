@@ -134,3 +134,97 @@ state on the relay.
 
 Record only test outcomes and redacted identifiers. Live authorization and
 deployment require maintainer approval.
+
+## Staging runbook
+
+Use a dedicated relay database and the packaged Connections binary from one
+reviewed commit. Test with synthetic data before authorizing Slack traffic.
+
+1. Record the commit with `git rev-parse HEAD`. Build on the staging host
+   with the Go toolchain pinned by Go CI using
+   `go build -trimpath -o bin/connections ./cmd/connections`. Record the
+   artifact checksum with `shasum -a 256 bin/connections`.
+2. Provision a dedicated database. Apply relay migrations once in lexical
+   order using the migration identity. On an existing database, apply only
+   migrations known to be outstanding. Start the binary with the service
+   manager using `bin/connections -listen 127.0.0.1:8766` and the hosted
+   configuration above. Keep a separate migration/maintenance identity if
+   the runtime role has no schema privileges.
+3. At HTTPS ingress, forward `/slack/enroll`, `/slack/events`,
+   `/oauth/identity`, `/oauth/install`, and `/pairings/*` to the loopback
+   listener. Preserve methods, bodies, query strings, authorization and
+   Slack signature headers. Disable request logging on these routes or
+   exclude those sensitive fields. Disable upstream retries on mutating
+   requests. Route health probes without credentials and expose only their
+   status. Keep the listener unavailable from the public network.
+4. Check `/healthz` and `/readyz` over the configured origin with certificate
+   verification enabled. Confirm unsigned event requests and unauthorized
+   enrollment are rejected. Run the synthetic rehearsal below before
+   accepting real Slack events.
+
+### Retention and rollback
+
+Recommended pilot policy is to scrub undelivered goal text after 24 hours,
+with an hourly job and an alert on missed runs. With an on-time job, a body
+can remain for up to 25 hours. A receipt or explicit revocation scrubs it
+earlier. The job acts on queued bodies. It cannot recall a body already
+returned to an authenticated local poll. Keep pairing tombstones and event
+IDs for the pilot so retries cannot create duplicate tasks. Apply the
+approved retention policy to backups and any log storage as well.
+
+Use a secret-injected maintenance DSN and the exact configured app and
+workspace/operator IDs. From the checkout, run the following with the
+approved retention hours (24 shown).
+
+```sh
+pilot_scope="${DIFQO_SLACK_WORKSPACE_ID}:${DIFQO_SLACK_OPERATOR_ID}"
+PGDATABASE="$DIFQO_RELAY_DATABASE_URL" psql -X -v ON_ERROR_STOP=1 \
+  -v app_id="$DIFQO_SLACK_APP_ID" -v pilot_scope="$pilot_scope" \
+  -v retention_hours=24 -f relay/operations/expire-slack-goals.sql
+```
+
+To roll back the pilot, stop local polling, pause the pilot ingress routes,
+and drain and stop Connections before changing the binary. Then retire the
+pilot scope and scrub queued bodies in one transaction.
+
+```sh
+pilot_scope="${DIFQO_SLACK_WORKSPACE_ID}:${DIFQO_SLACK_OPERATOR_ID}"
+PGDATABASE="$DIFQO_RELAY_DATABASE_URL" psql -X -v ON_ERROR_STOP=1 \
+  -v app_id="$DIFQO_SLACK_APP_ID" -v pilot_scope="$pilot_scope" \
+  -f relay/operations/retire-slack-pilot.sql
+```
+
+Verify the targeted scope has no claimed pairings, OAuth flows, or queued
+bodies, and that replay IDs remain. Keep ingress paused until the restored
+binary is compatible with the current schema and passes health checks.
+Keep the tombstones in the current database. Restoring a pre-retirement
+backup could reactivate claims. Resuming the pilot requires fresh pairing.
+Local tasks that already committed remain in local Difqo.
+
+### Rehearsal
+
+Use the disposable databases described in [ADR 0010](adr/0010-official-slack-connect.md)
+and run the same tests as Go CI.
+
+```sh
+go build -o bin/connections ./cmd/connections
+go test -race -count=1 ./internal/slackrelay ./internal/slackintake
+python3 scripts/connections-smoke.py bin/connections
+python3 scripts/slack-staging-smoke.py
+```
+
+The executable smoke checks startup, health, and shutdown. The staging smoke
+creates its own disposable schema and checks expiry, rollback, replay ID
+preservation, scope isolation, and repeatability. The Go tests cover synthetic
+TLS pairing, signed events, and local receipts. Verify the real ingress and
+Slack configuration separately during the authorized pilot.
+
+### Owner decisions before a live pilot
+
+| Decision | Required input |
+| --- | --- |
+| Origin and infrastructure | Exact stable HTTPS origin, staging host and TLS/ingress owner, dedicated database and migration owner |
+| Slack app and people | Confirm the pilot app, the `nepai` workspace ID, approved operator ID and installing admin. Authorize both OAuth redirects and the Events URL at the chosen origin. |
+| Secrets | Name who provisions the relay DSN, Slack client and signing secrets, stable token encryption key, and pilot enrollment token via a secret store. Only the enrollment credential goes to the local pilot operator's server. |
+| Retention | Approve the proposed 24-hour cutoff and hourly sweep, the missed-run alert and owner, and backup retention. |
+| Rollback and acceptance | Name who can pause ingress and retire the pilot, where the prior compatible artifact is kept, and who can authorize the live acceptance test. |
