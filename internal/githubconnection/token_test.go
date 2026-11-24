@@ -165,3 +165,69 @@ func checkJWT(auth string, key *rsa.PublicKey) bool {
 	return err == nil && json.Unmarshal(raw, &claims) == nil && claims.Issuer == "10" &&
 		claims.Issued < now && claims.Expiry > now && claims.Expiry-claims.Issued <= 600
 }
+
+func TestCredentialRequestsDoNotFollowRedirects(t *testing.T) {
+	for _, hop := range []string{"Connections", "GitHub"} {
+		t.Run(hop, func(t *testing.T) {
+			var destinations atomic.Int32
+			handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path == "/redirect-destination" {
+					destinations.Add(1)
+					if r.Header.Get("Authorization") != "" {
+						t.Error("redirect destination received credentials")
+					}
+					w.WriteHeader(http.StatusNoContent)
+					return
+				}
+				if r.Header.Get("Authorization") == "" {
+					t.Error("initial request did not carry fixture credentials")
+				}
+				w.Header().Set("Location", "/redirect-destination")
+				w.WriteHeader(http.StatusTemporaryRedirect)
+			})
+			client := httpClient()
+			if hop == "Connections" {
+				upstream := httptest.NewTLSServer(handler)
+				defer upstream.Close()
+				client.Transport = upstream.Client().Transport
+				if _, err := fetch(t.Context(), client, upstream.URL, strings.Repeat("a1", 32)); err == nil {
+					t.Fatal("broker redirect was accepted")
+				}
+			} else {
+				upstream := httptest.NewServer(handler)
+				defer upstream.Close()
+				if err := githubRequest(t.Context(), client, http.MethodPost, upstream.URL, "fixture-jwt", []byte("{}"), http.StatusCreated, new(Grant)); err == nil {
+					t.Fatal("GitHub redirect was accepted")
+				}
+			}
+			if destinations.Load() != 0 {
+				t.Fatal("request followed a redirect")
+			}
+		})
+	}
+}
+
+func TestFetchRejectsUnsafeBrokerOrigins(t *testing.T) {
+	var requests atomic.Int32
+	broker := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		requests.Add(1)
+		w.WriteHeader(http.StatusUnauthorized)
+	}))
+	defer broker.Close()
+
+	for _, origin := range []string{
+		"http://" + strings.TrimPrefix(broker.URL, "https://"),
+		broker.URL + "/relay",
+		broker.URL + "/%2f",
+		broker.URL + "?repository=elsewhere",
+		broker.URL + "#fragment",
+	} {
+		if _, err := fetch(t.Context(), broker.Client(), origin, strings.Repeat("a1", 32)); err == nil ||
+			!strings.Contains(err.Error(), "requires a Connections HTTPS origin") {
+			t.Errorf("invalid origin %q did not fail validation", origin)
+		}
+	}
+	if requests.Load() != 0 {
+		t.Fatal("invalid origin received a request")
+	}
+}
