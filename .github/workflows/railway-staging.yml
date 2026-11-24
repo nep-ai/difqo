@@ -25,14 +25,22 @@ jobs:
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
+          ref: refs/heads/main
           persist-credentials: false
       - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
         with:
           node-version: '24'
-      - name: Install Railway CLI and IaC SDK
+      - name: Install locked Railway IaC SDK
+        run: npm ci --prefix .railway
+      - name: Install verified Railway CLI
+        working-directory: ${{ runner.temp }}
         run: |
-          npm install --prefix "$RUNNER_TEMP/railway-cli" --no-save --package-lock=false @railway/cli@5.75.0
-          npm install --prefix .railway --no-save --package-lock=false railway@3.17.0
+          archive=railway-v5.75.0-x86_64-unknown-linux-gnu.tar.gz
+          curl --proto '=https' --proto-redir '=https' --fail --silent --show-error --location \
+            --output "$archive" "https://github.com/railwayapp/cli/releases/download/v5.75.0/$archive"
+          printf '%s  %s\n' '28fca554b4862a1129d4976223e91ec828b9d402196a3ba823b83a7b06b6440e' "$archive" | sha256sum --check
+          mkdir railway-cli
+          tar -xzf "$archive" -C railway-cli railway
       - name: Plan and apply Railway staging
         env:
           RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
@@ -46,7 +54,16 @@ jobs:
             fi
           done
 
-          railway="$RUNNER_TEMP/railway-cli/node_modules/.bin/railway"
+          railway="$RUNNER_TEMP/railway-cli/railway"
           plan="$RUNNER_TEMP/railway-staging-plan.json"
+          result="$RUNNER_TEMP/railway-staging-apply.json"
           "$railway" config plan --environment "$RAILWAY_ENVIRONMENT_ID" --out "$plan"
-          "$railway" config apply --environment "$RAILWAY_ENVIRONMENT_ID" --plan "$plan" --yes
+          "$railway" config apply --environment "$RAILWAY_ENVIRONMENT_ID" --plan "$plan" --yes --json > "$result"
+          if ! jq -e '
+            ((.status == "applied" and (.changes | type) == "array") or .status == "noop")
+            and all((.changes // [])[]; .status != "failed")
+          ' "$result" >/dev/null; then
+            echo "::error::Railway did not fully apply the staging configuration"
+            exit 1
+          fi
+          echo "Railway staging configuration is up to date."
