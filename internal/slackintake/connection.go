@@ -8,14 +8,12 @@ import (
 	"errors"
 	"io"
 	"net/http"
-	"net/netip"
-	"net/url"
 	"time"
 
 	"github.com/nep-ai/difqo/internal/store"
 )
 
-var ErrRelayUnavailable = errors.New("local Slack relay fixture is unavailable or returned an invalid result")
+var ErrRelayUnavailable = errors.New("Slack relay is unavailable or returned an invalid result")
 
 type Connections struct {
 	tasks  store.Tasks
@@ -32,23 +30,6 @@ type ConnectionView struct {
 	Operator   string              `json:"verified_operator,omitempty"`
 	Installed  string              `json:"installed_workspace,omitempty"`
 	Binding    *store.SlackBinding `json:"binding,omitempty"`
-}
-
-// NewFixtureConnections enables only a numeric loopback relay for this slice.
-func NewFixtureConnections(tasks store.Tasks, origin string) (*Connections, error) {
-	u, err := url.Parse(origin)
-	if err != nil || u.Scheme != "http" || u.User != nil || u.Port() == "" || u.RawQuery != "" ||
-		u.ForceQuery || u.Fragment != "" || u.Path != "" {
-		return nil, errors.New("Slack relay fixture must be an HTTP loopback origin with a port")
-	}
-	ip, err := netip.ParseAddr(u.Hostname())
-	if err != nil || !ip.IsLoopback() {
-		return nil, errors.New("Slack relay fixture must use a numeric loopback address")
-	}
-	return &Connections{tasks: tasks, origin: u.String(), client: &http.Client{
-		Timeout:       5 * time.Second,
-		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
-	}}, nil
 }
 
 func connectionView(s store.SlackConnection) ConnectionView {

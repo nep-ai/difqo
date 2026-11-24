@@ -186,7 +186,11 @@ or an intentional skip, and HTTP 503 if the queue cannot commit. Revocation
 clears the old claim and queued goal bodies in the same transaction while
 retaining replay identifiers.
 
-When the local server starts with `-slack-relay-fixture`, it polls outbound.
+When the local server starts with `-slack-relay` and a pathless HTTPS origin,
+it uses the system trust store, validates the relay certificate, and refuses
+redirects. The saved pairing origin must match before the client sends its
+proof. Tests can instead use `-slack-relay-fixture` with a numeric loopback
+HTTP origin. Both modes poll outbound.
 Confirmation persists an intent before claiming the exact binding. An
 interrupted claim retries with the same pairing proof. Disconnect retires
 the local generation first and persists the pending relay revocation until
@@ -207,7 +211,8 @@ cannot create a task or send a receipt for the retired generation.
 
 For the full delivery test, apply `migrations/*.sql` to a second disposable
 database and set `DIFQO_SLACK_DELIVERY_TEST_DATABASE_URL` as well as the relay
-test database URL. Run `go test -race -count=1 ./internal/slackrelay`.
+test database URL. Run
+`go test -race -count=1 ./internal/slackrelay ./internal/slackintake`.
 Automatic retention, workspace installation reuse, live Slack revocation
 events, and hosted deployment remain follow-up work.
 An outgoing-only local client keeps the workstation off the public Internet.
@@ -219,4 +224,5 @@ Before live acceptance, the maintainer needs to designate an owner for the
 official distributed app, choose the relay's HTTPS origin and deployment
 owner, and authorize a test workspace that can exercise admin approval.
 Those are deployment prerequisites. The lifecycle and relay fixture slices
-can proceed without those inputs.
+can proceed without those inputs. See the [Slack pilot checklist](../slack-pilot.md)
+for deployment prerequisites and acceptance steps.
