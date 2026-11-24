@@ -55,9 +55,8 @@ The next installer slices are reviewed separately:
 
 1. **Other platform adapters.** Select and verify a PostgreSQL acquisition path
    for Debian and native Windows.
-2. **Service lifecycle.** Verify login restart on a clean Mac and add persistent
-   pause, updates, and uninstall while preserving data. The macOS adapter below
-   handles initial registration, startup, and loopback health.
+2. **Service lifecycle.** Verify registration, persistent pause, and restart on a
+   clean Mac. Add updates and uninstall while preserving data.
 3. **Release and onboarding.** Pin the reviewed version and trusted manifest
    in the download bootstrap. Exercise the first local goal on a clean Apple
    silicon Mac before publishing the bootstrap command.
@@ -167,8 +166,22 @@ When the database-backed health check passes, open `http://127.0.0.1:8765`.
 The server job searches the standard system, Homebrew, and Docker Desktop
 binary directories for the container CLI used by review reruns.
 Logs are under `~/Library/Application Support/Difqo/service`.
-`./bin/service-macos stop` unloads the service for the current login and
-preserves the database, settings, and LaunchAgent files for the next login.
+Use `./bin/service-macos pause` to disable the agents across logins.
+`./bin/service-macos start` resumes a paused service. Use
+`./bin/service-macos restart` to reload the jobs and wait for health.
+`./bin/service-macos stop` unloads the jobs for the current login only.
+All four commands preserve the database and settings.
+
+`status` reports running, unloaded, paused, or unhealthy. Only a healthy
+running service returns exit status zero. If pause was interrupted, rerun it
+to finish. If resume fails its health check, the adapter restores the
+disabled state and keeps the pause marker for retry.
+
+Verify the commands with a staged release and simulated launchctl:
+
+```sh
+python3 scripts/service-macos-smoke.py "$installed_release/bin/service-macos"
+```
 The service adapter requires the bundled runtime for a managed cluster.
 See [ADR 0013](adr/0013-macos-launch-agents.md) for the startup contract.
 

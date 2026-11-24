@@ -31,8 +31,16 @@ case "$1" in
   bootstrap)
     label=${3##*/}
     label=${label%.plist}
+    [ ! -e "$FIXTURE/$label.disabled" ]
     printf '%s\n' "$label" >> "$FIXTURE/starts"
     touch "$FIXTURE/$label"
+    ;;
+  disable)
+    [ "${FAIL_DISABLE:-}" != 1 ]
+    touch "$FIXTURE/${2##*/}.disabled"
+    ;;
+  enable)
+    rm -f "$FIXTURE/${2##*/}.disabled"
     ;;
   bootout)
     printf '%s\n' "${2##*/}" >> "$FIXTURE/stops"
@@ -76,6 +84,8 @@ printf '%s\n' "$1" >> "$FIXTURE/cli"
     agents = home / 'Library/LaunchAgents'
     work = Path(env['FIXTURE'])
     dsn = 'postgres://fixture:synthetic-only@127.0.0.1:5432/fixture'
+    assert 'Unloaded' in run(env, adapter, 'status', ok=False)
+    assert not state.exists()
     assert 'already occupied' in run(env, adapter, 'start', ok=False, PORT_TAKEN='1', DIFQO_DATABASE_URL=dsn)
     assert not (state / 'database-url').exists()
     assert 'ready' in run(env, adapter, 'start', DIFQO_DATABASE_URL=dsn)
@@ -96,6 +106,9 @@ printf '%s\n' "$1" >> "$FIXTURE/cli"
     assert 'ready' in run(env, adapter, 'status')
     assert (work / 'starts').read_text().splitlines() == ['com.difqo.server']
     assert 'conflicts' in run(env, adapter, 'start', ok=False, DIFQO_DATABASE_URL=dsn + 'other')
+    assert 'conflicts' in run(env, adapter, 'restart', ok=False, DIFQO_DATABASE_URL=dsn + 'other')
+    assert 'ready' in run(env, adapter, 'status')
+    assert 'Unhealthy' in run(env, adapter, 'status', ok=False, NO_HEALTH='1')
     run(env, adapter, 'run')
     assert (work / 'cli').read_text().splitlines() == ['setup-database', 'server']
     lock = state / '.service-operation.lock'
@@ -115,8 +128,20 @@ printf '%s\n' "$1" >> "$FIXTURE/cli"
         holder.communicate(timeout=5)
     assert lock.is_file()
     run(env, adapter, 'stop')
-    run(env, adapter, 'status', ok=False)
+    assert 'Unloaded' in run(env, adapter, 'status', ok=False)
+    assert 'running' in run(env, adapter, 'restart')
+    assert 'paused' in run(env, adapter, 'pause')
+    assert 'Paused' in run(env, adapter, 'status', ok=False)
+    assert (work / 'com.difqo.server.disabled').is_file()
+    assert not (work / 'com.difqo.postgresql.disabled').exists()
+    assert 'did not become healthy' in run(env, adapter, 'start', ok=False, NO_HEALTH='1')
+    assert 'Paused' in run(env, adapter, 'status', ok=False)
+    assert (work / 'com.difqo.server.disabled').is_file()
+    assert 'running' in run(env, adapter, 'start')
+    assert not (state / 'paused').exists()
+    assert not (work / 'com.difqo.server.disabled').exists()
     assert config.read_text().strip() == dsn
+    assert (work / 'cli').read_text().splitlines().count('setup-database') == 1
 
     env, home, release, adapter = fixture('managed')
     work = Path(env['FIXTURE'])
@@ -138,8 +163,20 @@ printf '%s\n' "$1" >> "$FIXTURE/cli"
     assert not list((home / 'Library/LaunchAgents').glob('*.plist'))
     assert 'ready' in run(env, adapter, 'start')
     run(env, adapter, 'run')
+    run(env, adapter, 'pause', ok=False, FAIL_DISABLE='1')
+    assert 'Pause is incomplete' in run(env, adapter, 'status', ok=False)
+    assert 'paused' in run(env, adapter, 'pause')
+    assert 'Paused' in run(env, adapter, 'status', ok=False)
+    assert (work / 'com.difqo.server.disabled').is_file()
+    assert (work / 'com.difqo.postgresql.disabled').is_file()
+    assert 'running' in run(env, adapter, 'restart')
+    assert 'running' in run(env, adapter, 'status')
+    assert not list(work.glob('*.disabled'))
+    assert 'running' in run(env, adapter, 'restart')
+    assert (work / 'stops').read_text().splitlines()[-2:] == ['com.difqo.server', 'com.difqo.postgresql']
+    assert (work / 'starts').read_text().splitlines()[-2:] == ['com.difqo.postgresql', 'com.difqo.server']
     run(env, adapter, 'stop')
     assert (pg / 'password').read_text().strip() == 'a' * 64
     assert not list(work.glob('com.difqo.*'))
 
-print('LaunchAgent smoke passed: private and external startup, path quoting, persisted settings, timeout rollback, and safe rerun.')
+print('LaunchAgent smoke passed: private and external startup, path quoting, persisted settings, health and pause rollback, restart, and safe rerun.')

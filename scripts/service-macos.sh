@@ -21,6 +21,7 @@ server_label=com.difqo.server
 database_label=com.difqo.postgresql
 url=http://127.0.0.1:8765
 database="$support/postgres-18"
+paused_file="$state/paused"
 private_file() {
   [ -f "$1" ] && [ ! -L "$1" ] && [ "$(stat -f '%u:%Lp' "$1")" = "$uid:600" ]
 }
@@ -46,9 +47,12 @@ if [ "${1:-}" = run ] && [ "$#" -eq 1 ]; then
   exec "$bin/difqo" server -web "$bin/../web" -artifacts "$support/artifacts"
 fi
 
-if [ "$#" -ne 1 ] || [[ "$1" != start && "$1" != stop && "$1" != status ]]; then
-  fail 'Usage: service-macos start|stop|status'
-fi
+[ "$#" -eq 1 ] || fail 'Usage: service-macos start|stop|status|pause|restart'
+action=$1
+case "$action" in
+  start|stop|status|pause|restart) ;;
+  *) fail 'Usage: service-macos start|stop|status|pause|restart' ;;
+esac
 
 loaded() {
   launchctl print "$domain/$1" >/dev/null 2>&1
@@ -59,9 +63,32 @@ healthy() {
 }
 
 launchctl print "$domain" >/dev/null 2>&1 || fail 'Run from a logged-in macOS graphical session.'
-if [ "$1" = status ]; then
-  loaded "$server_label" && healthy || fail 'Difqo is not healthy.'
-  printf 'Difqo is ready at %s\n' "$url"
+read_paused() {
+  paused=false
+  if [ -e "$paused_file" ] || [ -L "$paused_file" ]; then
+    private_file "$paused_file" || fail 'Service pause marker is insecure.'
+    paused=true
+  fi
+}
+
+if [ "$action" = status ]; then
+  read_paused
+  if "$paused"; then
+    if [ "$(cat "$paused_file")" != paused ] || loaded "$server_label" || loaded "$database_label"; then
+      fail 'Unhealthy. Pause is incomplete. Run service-macos pause to finish.'
+    fi
+    fail 'Paused. Run service-macos start to resume.'
+  fi
+  if ! loaded "$server_label"; then
+    if loaded "$database_label"; then fail 'Unhealthy. PostgreSQL is loaded but the server is unloaded.'; fi
+    fail 'Unloaded. Run service-macos start.'
+  fi
+  private_file "$state/mode" || fail 'Unhealthy. Service database mode is missing or insecure.'
+  if [ "$(cat "$state/mode")" = managed ] && ! loaded "$database_label"; then
+    fail 'Unhealthy. The managed PostgreSQL agent is unloaded.'
+  fi
+  if ! healthy; then fail "Unhealthy. Check the logs under $state."; fi
+  printf 'Difqo is running and ready at %s\n' "$url"
   exit
 fi
 
@@ -78,6 +105,8 @@ fi
 # last holder exits, even after a forced stop. Keep the file itself in place.
 exec 9>> "$lock"
 /usr/bin/lockf -s -t 0 9 || fail 'Another service operation holds the lock. Retry after it finishes.'
+read_paused
+resuming=false
 stage=
 started_server=false
 started_database=false
@@ -90,6 +119,9 @@ cleanup() {
     if "$started_database"; then launchctl bootout "$domain/$database_label" || true; fi
     if "$wrote_server"; then rm -f "$agents/$server_label.plist"; fi
     if "$wrote_database"; then rm -f "$agents/$database_label.plist"; fi
+    if "$resuming" && disable_jobs && ! loaded "$server_label" && ! loaded "$database_label"; then
+      mark_pause paused
+    fi
   fi
   if [ -n "$stage" ]; then rm -rf "$stage"; fi
   exit "$result"
@@ -98,10 +130,39 @@ trap cleanup EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
 
-if [ "$1" = stop ]; then
+stop_jobs() {
   if loaded "$server_label"; then launchctl bootout "$domain/$server_label"; fi
-  if loaded "$database_label"; then launchctl bootout "$domain/$database_label"; fi
+  if [ "${mode:-}" = managed ] && loaded "$database_label"; then launchctl bootout "$domain/$database_label"; fi
+}
+
+disable_jobs() {
+  launchctl disable "$domain/$server_label" || return
+  if [ "$mode" = managed ]; then launchctl disable "$domain/$database_label"; fi
+}
+
+mark_pause() {
+  printf '%s\n' "$1" > "$stage/pause"
+  mv "$stage/pause" "$paused_file"
+}
+
+if [ "$action" = stop ]; then
+  if private_file "$state/mode"; then mode=$(cat "$state/mode"); fi
+  stop_jobs
   printf 'Difqo services stopped. Settings and data are preserved.\n'
+  exit
+fi
+
+stage=$(mktemp -d "$state/.service-stage.XXXXXX")
+if [ "$action" = pause ]; then
+  private_file "$state/mode" || fail 'No saved service configuration to pause.'
+  mode=$(cat "$state/mode")
+  [[ "$mode" = managed || "$mode" = external ]] || fail 'Unknown service database mode.'
+  # Save the intent first so an interrupted pause can be retried or resumed.
+  mark_pause pending
+  disable_jobs
+  stop_jobs
+  mark_pause paused
+  printf 'Difqo is paused. Settings and data are preserved.\n'
   exit
 fi
 
@@ -109,7 +170,6 @@ if ! loaded "$server_label" && nc -z -w 1 127.0.0.1 8765 >/dev/null 2>&1; then
   fail 'Port 8765 is already occupied.'
 fi
 
-stage=$(mktemp -d "$state/.service-stage.XXXXXX")
 mode=managed
 if [ -e "$state/mode" ] || [ -L "$state/mode" ]; then
   private_file "$state/mode" || fail 'Service database mode is insecure.'
@@ -186,10 +246,17 @@ write_agent() {
 write_agent "$server_label" /bin/bash "$bin/service-macos" run
 if [ "$mode" = managed ]; then
   write_agent "$database_label" "$postgres" -D "$database/data"
-  if ! loaded "$database_label"; then
-    launchctl bootstrap "$domain" "$agents/$database_label.plist"
-    started_database=true
-  fi
+fi
+if [ "$action" = restart ] || "$paused"; then stop_jobs; fi
+if "$paused"; then
+  resuming=true
+  mark_pause pending
+  if [ "$mode" = managed ]; then launchctl enable "$domain/$database_label"; fi
+  launchctl enable "$domain/$server_label"
+fi
+if [ "$mode" = managed ] && ! loaded "$database_label"; then
+  launchctl bootstrap "$domain" "$agents/$database_label.plist"
+  started_database=true
 fi
 if ! loaded "$server_label"; then
   launchctl bootstrap "$domain" "$agents/$server_label.plist"
@@ -198,7 +265,8 @@ fi
 
 for ((attempt=0; attempt<40; attempt++)); do
   if healthy; then
-    printf 'Difqo is ready at %s\n' "$url"
+    if "$resuming"; then rm "$paused_file"; fi
+    printf 'Difqo is running and ready at %s\n' "$url"
     exit 0
   fi
   sleep 1
