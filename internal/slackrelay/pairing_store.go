@@ -22,6 +22,7 @@ var (
 type pairingStore struct {
 	db     *pgxpool.Pool
 	appID  string
+	scope  string
 	tokens cipher.AEAD
 }
 
@@ -51,13 +52,13 @@ func (s pairingStore) lock(ctx context.Context, tx pgx.Tx, id string) (pairing, 
 			SELECT proof_hash, expires_at, revoked, approval_pending, claimed, verified_workspace,
 			       verified_operator, installed_workspace, dm_channel, sealed_bot_token
 			FROM slack_relay_pairings
-			WHERE app_id = $1 AND id = $2
+			WHERE app_id = $1 AND id = $2 AND pilot_scope = $3
 			FOR UPDATE
 		)
 		SELECT proof_hash, NOT claimed AND expires_at <= clock_timestamp(), revoked, approval_pending, claimed,
 		       verified_workspace, verified_operator, installed_workspace, dm_channel, sealed_bot_token
 		FROM locked
-	`, s.appID, id).Scan(&p.proofHash, &p.expired, &p.revoked, &p.pending, &p.claimed,
+	`, s.appID, id, s.scope).Scan(&p.proofHash, &p.expired, &p.revoked, &p.pending, &p.claimed,
 		&p.identity.Workspace, &p.identity.Operator, &p.workspace, &p.channel, &p.sealedToken)
 	return p, err
 }
@@ -65,13 +66,8 @@ func (s pairingStore) lock(ctx context.Context, tx pgx.Tx, id string) (pairing, 
 func (s pairingStore) owned(ctx context.Context, id, proof string, register bool, use func(pgx.Tx, pairing) error) error {
 	hash := sha256.Sum256([]byte(proof))
 	return pgx.BeginFunc(ctx, s.db, func(tx pgx.Tx) error {
-		if register {
-			_, err := tx.Exec(ctx, `
-				INSERT INTO slack_relay_pairings (app_id, id, proof_hash, expires_at)
-				VALUES ($1, $2, $3, clock_timestamp() + make_interval(secs => $4))
-				ON CONFLICT (app_id, id) DO NOTHING
-			`, s.appID, id, hash[:], pairingTTL.Seconds())
-			if err != nil {
+		if register && s.scope == "" {
+			if err := s.register(ctx, tx, id, hash[:]); err != nil {
 				return err
 			}
 		}
@@ -87,6 +83,15 @@ func (s pairingStore) owned(ctx context.Context, id, proof string, register bool
 		}
 		return use(tx, p)
 	})
+}
+
+func (s pairingStore) register(ctx context.Context, tx pgx.Tx, id string, hash []byte) error {
+	_, err := tx.Exec(ctx, `
+		INSERT INTO slack_relay_pairings (app_id, id, proof_hash, expires_at, pilot_scope)
+		VALUES ($1, $2, $3, clock_timestamp() + make_interval(secs => $4), $5)
+		ON CONFLICT (app_id, id) DO NOTHING
+	`, s.appID, id, hash, pairingTTL.Seconds(), s.scope)
+	return err
 }
 
 func (s pairingStore) read(ctx context.Context, id, proof string) (pairing, error) {

@@ -48,9 +48,9 @@ func (s pairingStore) enqueue(ctx context.Context, binding store.SlackBinding, e
 		INSERT INTO slack_relay_events (app_id, workspace_id, event_id, pairing_id, goal)
 		SELECT app_id, verified_workspace, $5, id, $6
 		FROM slack_relay_pairings
-		WHERE app_id = $1 AND verified_workspace = $2 AND verified_operator = $3 AND dm_channel = $4 AND claimed
+		WHERE app_id = $1 AND verified_workspace = $2 AND verified_operator = $3 AND dm_channel = $4 AND claimed AND pilot_scope = $7
 		FOR UPDATE
 		ON CONFLICT (app_id, workspace_id, event_id) DO NOTHING
-	`, s.appID, binding.WorkspaceID, binding.OperatorID, binding.ChannelID, eventID, goal)
+	`, s.appID, binding.WorkspaceID, binding.OperatorID, binding.ChannelID, eventID, goal, s.scope)
 	return err
 }

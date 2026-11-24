@@ -192,6 +192,8 @@ func (f *fixture) exchange(w http.ResponseWriter, req *http.Request, key *rsa.Pr
 			claims["nonce"] = "other-nonce"
 		case "subject":
 			claims["sub"] = testAdmin
+		case "other-operator":
+			claims["sub"], claims["https://slack.com/user_id"] = testAdmin, testAdmin
 		case "workspace":
 			claims["https://slack.com/team_id"] = "T999"
 		}

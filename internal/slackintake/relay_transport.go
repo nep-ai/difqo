@@ -20,11 +20,20 @@ var (
 )
 
 func NewHTTPSConnections(tasks store.Tasks, raw string) (*Connections, error) {
-	u, err := parseRelayOrigin(raw, "https")
+	origin, err := HTTPSRelayOrigin(raw)
 	if err != nil {
 		return nil, err
 	}
-	return newConnections(tasks, u.String()), nil
+	return newConnections(tasks, origin), nil
+}
+
+// HTTPSRelayOrigin validates and canonicalizes an official relay origin.
+func HTTPSRelayOrigin(raw string) (string, error) {
+	u, err := parseRelayOrigin(raw, "https")
+	if err != nil {
+		return "", err
+	}
+	return u.String(), nil
 }
 
 // NewFixtureConnections preserves the separate numeric-loopback HTTP mode.
