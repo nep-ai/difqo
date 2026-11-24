@@ -16,15 +16,17 @@ import (
 var ErrRelayUnavailable = errors.New("Slack relay is unavailable or returned an invalid result")
 
 type Connections struct {
-	tasks  store.Tasks
-	origin string
-	client *http.Client
+	tasks           store.Tasks
+	origin          string
+	client          *http.Client
+	enrollmentToken string
 }
 
 type ConnectionView struct {
 	Mode       string              `json:"mode"`
 	Generation int64               `json:"generation"`
 	State      string              `json:"state"`
+	OAuthURL   string              `json:"oauth_url,omitempty"`
 	PairingID  string              `json:"pairing_id,omitempty"`
 	Workspace  string              `json:"verified_workspace,omitempty"`
 	Operator   string              `json:"verified_operator,omitempty"`
@@ -82,6 +84,9 @@ func (c *Connections) Begin(ctx context.Context) (ConnectionView, error) {
 			Relay: c.origin, State: "connecting", Expires: time.Now().UTC().Add(15 * time.Minute)}
 		return nil
 	})
+	if err == nil && c.enrollmentToken != "" {
+		err = c.enroll(ctx, s.Pairing)
+	}
 	return connectionView(s), err
 }
 

@@ -9,8 +9,10 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -153,12 +155,36 @@ func TestHTTPSRelayDelivery(t *testing.T) {
 	event := Delivery{EventID: "EvHTTPS", Goal: "inspect the HTTPS fixture"}
 	var mu sync.Mutex
 	var proof, pairPath string
+	var status = relayStatus{State: "connecting"}
+	enrollment := strings.Repeat("f", 64)
+	firstEnrollment := true
 	claimed, receipted, revoked := false, false, false
 	relay := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		mu.Lock()
 		defer mu.Unlock()
-		if r.Method == http.MethodPut && proof == "" {
-			proof, pairPath = r.Header.Get("Authorization"), r.URL.Path
+		if r.Method == http.MethodPost && r.URL.Path == "/slack/enroll" {
+			var input struct {
+				ID    string `json:"pairing_id"`
+				Proof string `json:"proof"`
+			}
+			if r.URL.RawQuery != "" || r.Header.Get("Authorization") != "Bearer "+enrollment ||
+				json.NewDecoder(r.Body).Decode(&input) != nil || !pairingIDPattern.MatchString(input.ID) ||
+				!oauthState.MatchString(input.Proof) || input.Proof == enrollment {
+				t.Error("invalid local enrollment request")
+				w.WriteHeader(http.StatusBadRequest)
+				return
+			}
+			if proof != "" && (proof != "Bearer "+input.Proof || pairPath != "/pairings/"+input.ID) {
+				t.Error("enrollment retry changed its pairing or proof")
+			}
+			proof, pairPath = "Bearer "+input.Proof, "/pairings/"+input.ID
+			if firstEnrollment {
+				firstEnrollment = false
+				w.WriteHeader(http.StatusServiceUnavailable)
+			} else {
+				w.WriteHeader(http.StatusNoContent)
+			}
+			return
 		}
 		if proof == "" || proof != r.Header.Get("Authorization") || revoked {
 			w.WriteHeader(http.StatusUnauthorized)
@@ -166,8 +192,14 @@ func TestHTTPSRelayDelivery(t *testing.T) {
 		}
 		switch {
 		case r.Method == http.MethodPut && r.URL.Path == pairPath:
-			json.NewEncoder(w).Encode(relayStatus{State: "ready_to_link", Workspace: binding.WorkspaceID,
-				Operator: binding.OperatorID, Installed: binding.WorkspaceID, Binding: binding})
+			json.NewEncoder(w).Encode(status)
+		case r.Method == http.MethodPost && r.URL.Path == pairPath+"/identity":
+			json.NewEncoder(w).Encode(map[string]string{"url": fixtureOAuthURL("https://"+r.Host, "/identity", binding.WorkspaceID)})
+		case r.Method == http.MethodPost && r.URL.Path == pairPath+"/install":
+			json.NewEncoder(w).Encode(map[string]string{"url": fixtureOAuthURL("https://"+r.Host, "/install", binding.WorkspaceID)})
+		case r.Method == http.MethodPost && r.URL.Path == pairPath+"/approval-needed":
+			status.State = "approval_needed"
+			w.WriteHeader(http.StatusNoContent)
 		case r.Method == http.MethodPost && r.URL.Path == pairPath+"/claim":
 			var expected store.SlackBinding
 			if json.NewDecoder(r.Body).Decode(&expected) != nil || expected != binding {
@@ -203,15 +235,45 @@ func TestHTTPSRelayDelivery(t *testing.T) {
 		}
 	}))
 	defer relay.Close()
-	c, err := NewHTTPSConnections(tasks, relay.URL)
+	c, err := NewPilotConnections(tasks, relay.URL, enrollment)
 	if err != nil {
 		t.Fatal(err)
 	}
 	trustTestRelay(c, relay)
+	first, err := c.Begin(ctx)
+	if !errors.Is(err, ErrRelayUnavailable) || first.PairingID == "" {
+		t.Fatalf("lost enrollment response: %v", err)
+	}
 	begin, err := c.Begin(ctx)
-	if err != nil {
+	if err != nil || begin.PairingID != first.PairingID {
+		t.Fatalf("retry enrollment: %v", err)
+	}
+	if _, err := c.OAuth(ctx, begin.PairingID, "start_install"); !errors.Is(err, store.ErrSlackTransition) {
+		t.Fatal("started installation before verifying identity")
+	}
+	identity, err := c.OAuth(ctx, begin.PairingID, "start_identity")
+	if err != nil || identity.OAuthURL != fixtureOAuthURL(relay.URL, "/identity", binding.WorkspaceID) {
+		t.Fatalf("identity handoff error: %v", err)
+	}
+	mu.Lock()
+	status.Workspace, status.Operator = binding.WorkspaceID, binding.OperatorID
+	mu.Unlock()
+	if _, err := c.Refresh(ctx, begin.PairingID); err != nil {
 		t.Fatal(err)
 	}
+	install, err := c.OAuth(ctx, begin.PairingID, "start_install")
+	if err != nil || install.OAuthURL != fixtureOAuthURL(relay.URL, "/install", binding.WorkspaceID) {
+		t.Fatalf("install handoff error: %v", err)
+	}
+	if pending, err := c.OAuth(ctx, begin.PairingID, "approval_needed"); err != nil || pending.State != "approval_needed" {
+		t.Fatalf("pending approval: state=%q, err=%v", pending.State, err)
+	}
+	if _, err := c.OAuth(ctx, begin.PairingID, "start_install"); err != nil {
+		t.Fatalf("resume install: %v", err)
+	}
+	mu.Lock()
+	status.State, status.Installed, status.Binding = "ready_to_link", binding.WorkspaceID, binding
+	mu.Unlock()
 	if ready, err := c.Refresh(ctx, begin.PairingID); err != nil || ready.State != "ready_to_link" {
 		t.Fatalf("refresh: %s %v", ready.State, err)
 	}
@@ -230,4 +292,23 @@ func TestHTTPSRelayDelivery(t *testing.T) {
 	if !claimed || !receipted || !revoked {
 		t.Fatal("expected claim, receipt, and revocation over TLS")
 	}
+}
+
+func fixtureOAuthURL(origin, suffix, team string) string {
+	q := url.Values{
+		"client_id":    {"fixture-client"},
+		"state":        {strings.Repeat("a", 64)},
+		"redirect_uri": {origin + "/oauth" + suffix},
+		"team":         {team},
+	}
+	path := "/oauth/v2/authorize"
+	q.Set("scope", "im:history,im:write,chat:write")
+	if suffix == "/identity" {
+		path = "/openid/connect/authorize"
+		q.Set("scope", "openid profile")
+		q.Set("nonce", strings.Repeat("b", 64))
+		q.Set("response_type", "code")
+		q.Set("response_mode", "form_post")
+	}
+	return "https://slack.com" + path + "?" + q.Encode()
 }

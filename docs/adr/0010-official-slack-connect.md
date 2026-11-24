@@ -224,7 +224,11 @@ pairings carry their approved scope in PostgreSQL, so fixture rows and
 pairings from a different configuration remain inaccessible. Identity
 callbacks must match the approved operator and workspace. The installation
 callback must match the workspace, while a separate admin can install the
-app. The local enrollment and OAuth URL handoff is the next slice.
+app. The local connection API enrolls the pairing and returns the Slack
+authorization URLs with separate identity and installation actions. It
+validates the Slack origin, flow parameters, and relay callback before
+returning a URL. The enrollment credential and pairing proof stay
+server-side.
 
 An outgoing-only local client keeps the workstation off the public Internet.
 A direct OAuth callback on each workstation would distribute Slack secrets
