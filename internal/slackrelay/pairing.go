@@ -105,6 +105,8 @@ func newRelay(db *pgxpool.Pool, tokenKey [32]byte, origin, slackOrigin, clientID
 	mux.HandleFunc("POST /pairings/{id}/install", r.start(installApp))
 	mux.HandleFunc("POST /pairings/{id}/approval-needed", r.markPending)
 	mux.HandleFunc("POST /oauth/identity", r.callback(signIn))
+	// Slack can return identity codes in the query despite requesting form_post.
+	mux.HandleFunc("GET /oauth/identity", r.callback(signIn))
 	mux.HandleFunc("GET /oauth/install", r.callback(installApp))
 	return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 		w.Header().Set("Cache-Control", "no-store")
@@ -240,12 +242,16 @@ func (r *relay) start(kind flowKind) http.HandlerFunc {
 func (r *relay) callback(kind flowKind) http.HandlerFunc {
 	return func(w http.ResponseWriter, req *http.Request) {
 		if req.Method == http.MethodHead {
-			w.Header().Set("Allow", http.MethodGet)
+			allow := http.MethodGet
+			if kind == signIn {
+				allow += ", " + http.MethodPost
+			}
+			w.Header().Set("Allow", allow)
 			w.WriteHeader(http.StatusMethodNotAllowed)
 			return
 		}
 		source, err := url.ParseQuery(req.URL.RawQuery)
-		if kind == signIn {
+		if req.Method == http.MethodPost {
 			req.Body = http.MaxBytesReader(w, req.Body, 8<<10)
 			err = req.ParseForm()
 			source = req.PostForm

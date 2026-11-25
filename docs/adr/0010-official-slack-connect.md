@@ -135,8 +135,9 @@ bindings. The next relay slice provides a numeric loopback HTTP fixture in
 `internal/slackrelay`. Its proof-authenticated `PUT /pairings/{id}` returns the
 status consumed by the local lifecycle. Separate proof-authenticated
 `POST /pairings/{id}/identity` and `POST /pairings/{id}/install` return short-lived
-authorization URLs. Slack returns identity results by form POST and install
-results by query parameters. Callbacks consume purpose-specific state and the
+authorization URLs. The relay requests form POST for identity and also accepts
+identity results by GET. Installation results arrive by GET.
+Callbacks consume purpose-specific state and the
 identity exchange also verifies the signed nonce. The local caller can record
 an explicit request for workspace approval with
 `POST /pairings/{id}/approval-needed`. A denied callback itself records no

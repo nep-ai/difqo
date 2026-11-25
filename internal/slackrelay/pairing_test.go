@@ -463,6 +463,24 @@ func TestOfficialPairingRejectsExpiredAndReplayedCallbacks(t *testing.T) {
 	f.poll("ready_to_link")
 }
 
+func TestOfficialPairingAcceptsIdentityQueryCallbackOnce(t *testing.T) {
+	f := newTestFixture(t)
+	f.poll("connecting")
+	identity := f.start(signIn)
+	callback := "/oauth/identity?" + url.Values{
+		"state": {identity.Get("state")},
+		"code":  {"operator:" + identity.Get("nonce")},
+	}.Encode()
+	f.request("HEAD", callback, "", nil, http.StatusMethodNotAllowed, nil)
+	f.request("GET", callback+"&state="+identity.Get("state"), "", nil, http.StatusBadRequest, nil)
+	f.request("GET", callback, "", nil, http.StatusNoContent, nil)
+	f.request("GET", callback, "", nil, http.StatusConflict, nil)
+	v := f.poll("connecting")
+	if v.Workspace != testWorkspace || v.Operator != testOperator || f.identityExchanges.Load() != 1 {
+		t.Fatal("query callback did not verify the operator exactly once")
+	}
+}
+
 func TestOfficialPairingReconnectAfterRevokedInstallation(t *testing.T) {
 	f := newTestFixture(t)
 	f.poll("connecting")
