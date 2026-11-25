@@ -5,6 +5,10 @@ set -euo pipefail
 [ "${GITHUB_ACTIONS:-}" = true ] && [ "${RUNNER_ENVIRONMENT:-}" = github-hosted ] ||
   { printf 'Live smoke requires a disposable GitHub-hosted runner.\n' >&2; exit 1; }
 if ! launchctl print "gui/$(id -u)" >/dev/null 2>&1; then
+  if [ "${REQUIRE_LIVE_SMOKE:-false}" = true ]; then
+    printf '::error::A graphical login domain is required to verify a staging candidate.\n'
+    exit 1
+  fi
   printf '::warning::No graphical login domain. Live LaunchAgent and verified-goal acceptance still need a clean Mac.\n'
   exit 0
 fi
