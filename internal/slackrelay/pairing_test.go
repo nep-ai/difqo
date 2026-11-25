@@ -463,6 +463,70 @@ func TestOfficialPairingRejectsExpiredAndReplayedCallbacks(t *testing.T) {
 	f.poll("ready_to_link")
 }
 
+func TestOfficialPairingAcceptsIdentityQueryCallbackOnce(t *testing.T) {
+	f := newTestFixture(t)
+	f.poll("connecting")
+	identity := f.start(signIn)
+	callback := "/oauth/identity?" + url.Values{
+		"state": {identity.Get("state")},
+		"code":  {"operator:" + identity.Get("nonce")},
+	}.Encode()
+	f.request("HEAD", callback, "", nil, http.StatusMethodNotAllowed, nil)
+	f.request("GET", callback+"&state="+identity.Get("state"), "", nil, http.StatusBadRequest, nil)
+	f.request("GET", callback, "", nil, http.StatusNoContent, nil)
+	f.request("GET", callback, "", nil, http.StatusConflict, nil)
+	v := f.poll("connecting")
+	if v.Workspace != testWorkspace || v.Operator != testOperator || f.identityExchanges.Load() != 1 {
+		t.Fatal("query callback did not verify the operator exactly once")
+	}
+}
+
+func TestOfficialPairingConcurrentIdentityCallbacks(t *testing.T) {
+	f := newTestFixture(t)
+	f.poll("connecting")
+	identity := f.start(signIn)
+	form := url.Values{
+		"state": {identity.Get("state")},
+		"code":  {"operator:" + identity.Get("nonce")},
+	}.Encode()
+	get, err := http.NewRequestWithContext(t.Context(), http.MethodGet, f.server.URL+"/oauth/identity?"+form, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	post, err := http.NewRequestWithContext(t.Context(), http.MethodPost, f.server.URL+"/oauth/identity", strings.NewReader(form))
+	if err != nil {
+		t.Fatal(err)
+	}
+	post.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+
+	ready, start := make(chan struct{}, 2), make(chan struct{})
+	statuses := make(chan int, 2)
+	for _, req := range []*http.Request{get, post} {
+		go func() {
+			ready <- struct{}{}
+			<-start
+			res, err := f.server.Client().Do(req)
+			if err != nil {
+				t.Errorf("%s callback: %v", req.Method, err)
+				statuses <- 0
+				return
+			}
+			res.Body.Close()
+			statuses <- res.StatusCode
+		}()
+	}
+	<-ready
+	<-ready
+	close(start)
+	counts := make(map[int]int)
+	for range 2 {
+		counts[<-statuses]++
+	}
+	if counts[http.StatusNoContent] != 1 || counts[http.StatusConflict] != 1 || f.identityExchanges.Load() != 1 {
+		t.Fatalf("concurrent callback statuses = %v, identity exchanges = %d", counts, f.identityExchanges.Load())
+	}
+}
+
 func TestOfficialPairingReconnectAfterRevokedInstallation(t *testing.T) {
 	f := newTestFixture(t)
 	f.poll("connecting")

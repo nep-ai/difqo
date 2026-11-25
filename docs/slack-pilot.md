@@ -53,8 +53,8 @@ handling is implemented.
 1. Add both redirect URLs under **OAuth & Permissions** for the same app.
    Register `https://<relay-host>/oauth/identity` for Sign in with Slack and
    `https://<relay-host>/oauth/install` for workspace installation. The relay
-   handles the identity callback as a form POST and the install callback
-   as a GET. Start identity with `openid profile` and request bot scopes on
+   accepts identity callbacks by form POST or GET and installation callbacks
+   by GET. Start identity with `openid profile` and request bot scopes on
    the separate installation flow.
    [Sign in with Slack](https://docs.slack.dev/authentication/sign-in-with-slack/) ·
    [Installing via OAuth](https://docs.slack.dev/authentication/installing-with-oauth/)
