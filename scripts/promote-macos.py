@@ -196,13 +196,14 @@ def publish(version, revision, digests, directory, run_id, attempt, artifact_id,
         release = api(
             f"releases/{release_id}", "--method", "PATCH", "-F", "draft=false", "-f", "make_latest=false",
         )
-    else:
-        require(present == digests.keys(), "Published release has missing assets.")
-
     check_tag(version, revision, required=True)
     require(
         release["draft"] is False and release["prerelease"] is True and release["immutable"] is True,
         "Expected an immutable published prerelease. Do not enable installer distribution.",
+    )
+    require(
+        matching_assets(release_id, digests) == digests.keys(),
+        "Published release has missing assets. Do not enable installer distribution.",
     )
     return release["html_url"]
 

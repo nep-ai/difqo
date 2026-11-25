@@ -104,6 +104,7 @@ class PromotionTest(unittest.TestCase):
         }
         release = {"id": 3, "draft": True, "prerelease": True, "tag_name": version}
         assets = [{"name": "SHA256SUMS", "digest": "sha256:aaa", "state": "uploaded"}]
+        lose_asset_on_publish = False
 
         def api(endpoint, *args):
             if endpoint.startswith("git/matching-refs/"):
@@ -117,6 +118,8 @@ class PromotionTest(unittest.TestCase):
             if endpoint == "releases/3/assets?per_page=100":
                 return assets
             if endpoint == "releases/3":
+                if lose_asset_on_publish:
+                    assets.pop()
                 release.update(draft=False, immutable=True, html_url="https://example.invalid/release")
                 return release
             self.fail(f"Unexpected API endpoint {endpoint}")
@@ -136,6 +139,12 @@ class PromotionTest(unittest.TestCase):
                 publish(*args)
             tag["object"]["sha"] = "b" * 40
             with self.assertRaisesRegex(SystemExit, "tag must point directly"):
+                publish(*args)
+            tag["object"]["sha"] = revision
+            assets[0]["digest"] = "sha256:aaa"
+            release["draft"] = True
+            lose_asset_on_publish = True
+            with self.assertRaisesRegex(SystemExit, "Published release has missing assets"):
                 publish(*args)
 
 

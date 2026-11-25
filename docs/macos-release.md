@@ -79,10 +79,13 @@ release secret or Railway credentials.
   landing pin to the previous accepted version and its three digests, or
   disable installation if there is no accepted version. Verify the endpoint
   and try the reverted pin on a clean Mac. Correct the problem on `main` and
-  test and promote a new version.
+  test and promote a new version. If the published asset check fails, keep
+  that version out of the landing pin and promote a new candidate.
 - Website rollback only affects future installer downloads. For existing
   installations, pause the services and preserve the database and settings.
   Review the migrations between versions before reinstalling an older
   candidate. If the previous binary is incompatible with the applied schema,
-  use a forward fix or restore a tested pre-upgrade backup using the
-  [database recovery guidance](development.md#prepare-postgresql-from-an-installed-release).
+  use a forward fix or restore a pre-upgrade backup into a separate database.
+  Verify the restored data and the previous binary against that database
+  before switching the service to it. Follow the PostgreSQL instructions for
+  [creating and restoring a database dump](https://www.postgresql.org/docs/18/backup-dump.html).
