@@ -1,0 +1,51 @@
+name: Promote macOS pilot to production
+
+on:
+  workflow_dispatch:
+    inputs:
+      run_id:
+        description: Successful Web CI push run on main
+        type: string
+        required: true
+      run_attempt:
+        description: Tested run attempt
+        type: string
+        required: true
+      artifact_id:
+        description: Tested staging artifact ID
+        type: string
+        required: true
+      artifact_sha256:
+        description: Tested artifact ZIP SHA-256 from the staging summary
+        type: string
+        required: true
+
+permissions: {}
+
+concurrency:
+  group: macos-production
+  cancel-in-progress: false
+
+jobs:
+  promote:
+    if: github.repository == 'nep-ai/difqo' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: production
+    permissions:
+      actions: read
+      contents: write
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
+
+      - name: Verify and publish the tested candidate
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SOURCE_RUN: ${{ inputs.run_id }}
+          SOURCE_ATTEMPT: ${{ inputs.run_attempt }}
+          SOURCE_ARTIFACT: ${{ inputs.artifact_id }}
+          SOURCE_DIGEST: ${{ inputs.artifact_sha256 }}
+          IMMUTABLE_RELEASES_CONFIRMED: ${{ vars.DIFQO_IMMUTABLE_RELEASES_CONFIRMED }}
+        run: python3 scripts/promote-macos.py

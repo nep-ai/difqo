@@ -16,3 +16,6 @@ GitHub is the record for public decisions, accepted work, and releases. Use [dif
 1. Land the MVP setup instructions and stack-specific checks with the implementation. Run the documented build, lint, and tests on PRs. Use a read-only token and no secrets for fork PRs. Require the stable checks on `main` after confirming they run successfully for contributors.
 2. Prove the first workflow from a clean checkout. Give it a task, apply a saved project decision, verify the resulting change, and review the evidence before accepting it. Record the supported environment and current limitations based on the run.
 3. Before opening access, publish a tested quickstart and a short demo captured from the running build. Publish release notes with a GitHub prerelease once there is a supported artifact, and update the README, website, and waitlist copy together.
+
+For Apple silicon staging, production promotion, and rollback, follow the
+[macOS release runbook](docs/macos-release.md).

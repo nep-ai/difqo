@@ -18,6 +18,9 @@ jobs:
         with:
           persist-credentials: false
 
+      - name: Verify macOS promotion checks offline
+        run: python3 scripts/promote-macos-test.py
+
       - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
         with:
           node-version: '24'
@@ -110,9 +113,17 @@ jobs:
 
       - name: Exercise the live pilot when a graphical login is available
         if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository
-        run: /bin/bash scripts/install-macos-live-smoke.sh "$RUNNER_TEMP/difqo-pilot" "$PILOT_VERSION"
+        env:
+          REQUIRE_LIVE_SMOKE: ${{ github.event_name == 'push' }}
+        run: |
+          artifact="$RUNNER_TEMP/difqo-pilot"
+          /bin/bash scripts/install-macos-live-smoke.sh "$artifact" "$PILOT_VERSION"
+          if [[ "$REQUIRE_LIVE_SMOKE" == true ]]; then
+            printf '%s\n' 'passed' > "$artifact/LIVE-SMOKE"
+          fi
 
       - name: Upload the Apple silicon pilot candidate
+        id: candidate
         if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
@@ -120,4 +131,25 @@ jobs:
           path: ${{ runner.temp }}/difqo-pilot/
           if-no-files-found: error
           compression-level: 0
-          retention-days: 14
+          retention-days: ${{ github.event_name == 'push' && 30 || 14 }}
+
+      - name: Record the macOS staging candidate
+        if: github.event_name == 'push'
+        env:
+          ARTIFACT_ID: ${{ steps.candidate.outputs.artifact-id }}
+          ARTIFACT_URL: ${{ steps.candidate.outputs.artifact-url }}
+          ARTIFACT_DIGEST: ${{ steps.candidate.outputs.artifact-digest }}
+        run: |
+          {
+            printf '### Apple silicon staging candidate\n\n'
+            printf -- '- Version: `%s`\n' "$PILOT_VERSION"
+            printf -- '- Run / attempt: `%s` / `%s`\n' "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT"
+            printf -- '- Revision: `%s`\n' "$GITHUB_SHA"
+            printf -- '- [Artifact %s](%s)\n' "$ARTIFACT_ID" "$ARTIFACT_URL"
+            printf -- '- Artifact ZIP SHA-256: `%s`\n' "$ARTIFACT_DIGEST"
+            printf '\nInstaller asset SHA-256 digests\n\n```\n'
+            cd "$RUNNER_TEMP/difqo-pilot"
+            shasum -a 256 install-macos.sh SHA256SUMS "difqo-$PILOT_VERSION-darwin-arm64.tar.gz"
+            printf '```\n'
+            printf '\nPromote only after Web CI succeeds and the exact candidate passes maintainer acceptance.\n'
+          } >> "$GITHUB_STEP_SUMMARY"
