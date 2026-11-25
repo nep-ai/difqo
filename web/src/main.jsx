@@ -7,6 +7,9 @@ import './style.css'
 
 const api = import.meta.env.DEV ? '/api' : ''
 const base = import.meta.env.BASE_URL
+const sampleGoal = 'In greeting.txt, replace the line before with the line after. Leave other files unchanged.'
+const mac = /Mac/.test(navigator.platform)
+const sandboxGuide = 'https://github.com/nep-ai/difqo/blob/main/docs/development.md#runtime-selection-and-linux-sandbox-setup'
 const statuses = {
   queued: 'Queued',
   claimed: 'Running',
@@ -19,6 +22,11 @@ const statuses = {
 
 function Mark() {
   return <img className="mark" src={base + 'favicon.svg'} alt="" />
+}
+
+function macWorkerCommand(action) {
+  return 'service=$(/usr/bin/plutil -extract ProgramArguments.1 raw -o - "$HOME/Library/LaunchAgents/com.difqo.server.plist") && '
+    + '/bin/bash "${service%/*}/first-goal-macos" ' + action
 }
 
 class RequestError extends Error {
@@ -330,7 +338,12 @@ function ProjectFile({ goal }) {
     </div>
     {goal.specialist_run && <p>{goal.specialist_run.project.name} ({goal.specialist_run.project.id}) · {goal.specialist_run.name} · Revision {goal.specialist_run.revision}</p>}
     {goal.specialist_run && <p>{goal.decision ? 'Saved decision revision ' + goal.decision.id : 'No saved decision for this project.'}</p>}
-    {goal.status === 'queued' && <p>{goal.specialist_run ? 'Waiting for a worker bound to this project.' : 'The goal is saved. Waiting for a local worker to pick it up.'}</p>}
+    {goal.status === 'queued' && <p>{goal.specialist_run ? 'Waiting for a worker bound to this project.' : 'Goal saved. Work starts when a local worker claims it.'}</p>}
+    {mac && goal.status === 'queued' && goal.goal === sampleGoal && !goal.specialist_run &&
+      Number.isSafeInteger(goal.id) && goal.id > 0 &&
+      <div><p>Run this sample goal in a disposable repository from Terminal.</p>
+        <pre className="worker-command">{macWorkerCommand('run ' + goal.id)}</pre>
+      </div>}
     {goal.status === 'claimed' && <p>The local worker is running this goal.</p>}
     {goal.status === 'blocked' && <p>Restore Codex sign-in in the worker’s execution environment, then submit the goal again.</p>}
     {goal.status === 'exhausted' && <p>Check that a local worker is available before submitting this goal again.</p>}
@@ -357,6 +370,7 @@ function Chat({ goals, connection, submit, addTask }) {
   const [error, setError] = useState('')
   const composer = useRef(null)
   const decisionDialog = useRef(null)
+  const setupDialog = useRef(null)
   const end = useRef(null)
   const submitted = useRef(false)
   const openedHistory = useRef(false)
@@ -403,8 +417,9 @@ function Chat({ goals, connection, submit, addTask }) {
       <div ref={end} />
     </section> : <section className="welcome">
       <Mark />
-      <h2>What would you like to get done?</h2>
-      <p>Give the Chief of Staff a goal. You’ll see what the local worker did and what evidence is available here.</p>
+      <h2>Run your first coding goal</h2>
+      <p>Set up a local Codex worker, then queue a change for a Git repository. The worker runs the goal and posts its patch and check here.</p>
+      <button className="subtle" type="button" onClick={() => setupDialog.current.showModal()}>Worker setup</button>
     </section>}
     {showSpecialists && <Specialists request={request} mark={<Mark />} onQueued={addTask} close={() => {
       setShowSpecialists(false)
@@ -414,24 +429,42 @@ function Chat({ goals, connection, submit, addTask }) {
       <form onSubmit={send}>
         {error && <p className="submit-error" role="alert">{error}</p>}
         <div className="compose-box">
-          <label htmlFor="message" className="sr-only">Message your Chief of Staff</label>
+          <label htmlFor="message" className="sr-only">Coding goal</label>
           <textarea id="message" ref={composer} rows={2} maxLength={4096} value={draft}
-            onChange={event => setDraft(event.target.value)} readOnly={sending} placeholder="Describe your goal"
+            onChange={event => setDraft(event.target.value)} readOnly={sending} placeholder="Describe a repository change"
             onKeyDown={event => {
               if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) {
                 event.preventDefault()
                 event.currentTarget.form.requestSubmit()
               }
             }} />
-          <button className="primary" disabled={!draft.trim() || sending || connection !== 'ready'}>{sending ? 'Sending…' : 'Send'}</button>
+          <button className="primary" disabled={!draft.trim() || sending || connection !== 'ready'}>{sending ? 'Queuing…' : 'Queue goal'}</button>
         </div>
       </form>
       <div className="composer-meta"><div className="specialist-actions">
+        {goals.length > 0 && <button className="subtle" type="button" onClick={() => setupDialog.current.showModal()}>Worker setup</button>}
         <ProjectDecision dialog={decisionDialog} />
         <button className="subtle" type="button" ref={specialistTrigger} aria-expanded={showSpecialists}
           onClick={() => setShowSpecialists(open => !open)}>Specialists</button>
       </div><span>Shift + Enter for a new line</span></div>
     </div>
+    <dialog ref={setupDialog} aria-labelledby="worker-title">
+      <h2 id="worker-title">Set up a Codex worker</h2>
+      <p>A worker runs from Terminal for one goal at a time. Queued goals stay saved until a worker claims them.</p>
+      {mac ? <>
+        <p>On an installed Apple silicon Mac, open Docker Desktop. Run this in Terminal to build the image, sign in to Codex, and check the worker sandbox.</p>
+        <pre className="worker-command">{macWorkerCommand('prepare')}</pre>
+        <p>Once the worker preflight passes, load and queue the sample goal. Its queued card gives you the Terminal command for that goal. Return here to review the patch and rerun its check.</p>
+        <p>If the worker reports a sandbox error, follow the <a href={sandboxGuide}>Docker sandbox setup</a> and rerun its command.</p>
+        {draft.trim() && <p>Clear or queue your current draft to load the sample.</p>}
+        <button type="button" className="primary" disabled={sending || !!draft.trim()} onClick={() => {
+          setDraft(sampleGoal)
+          setupDialog.current.close()
+          composer.current?.focus()
+        }}>Load sample goal</button>
+      </> : <p>Follow <a href={sandboxGuide}>local worker setup</a> for your container runtime.</p>}
+      <form method="dialog"><button className="subtle">Close</button></form>
+    </dialog>
   </main>
 }
 
@@ -486,7 +519,7 @@ function App() {
       <span className="surface-title">Chief of Staff</span>
       <div className="top-actions">
         <span className={'badge ' + (connection === 'ready' ? 'good' : connection === 'offline' ? 'attention' : '')} role="status">
-          {{ ready: 'Connected', checking: 'Connecting', offline: 'Service unavailable' }[connection]}
+          {{ ready: 'Local service online', checking: 'Connecting to service', offline: 'Service unavailable' }[connection]}
         </span>
         <button className="subtle" onClick={() => dialog.current.showModal()}>Local service</button>
       </div>

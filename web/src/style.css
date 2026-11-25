@@ -97,6 +97,7 @@ dialog { width: min(90%, 410px); border: 1px solid var(--line-control); border-r
 dialog::backdrop { background: #18203966; }
 dialog h2 { font-size: 19px; }
 dialog p { margin: 9px 0 15px; }
+.worker-command { white-space: pre-wrap; overflow-wrap: anywhere; user-select: all; }
 @media (max-width: 540px) {
   .topbar { min-height: 56px; gap: 8px; }
   .surface-title { padding-left: 8px; }
