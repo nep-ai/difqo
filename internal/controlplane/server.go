@@ -150,15 +150,22 @@ func Handler(tasks store.Tasks, web fs.FS, artifacts *os.Root, runtimeChoice str
 	router.HandleFunc("POST /tasks/claim", func(w http.ResponseWriter, r *http.Request) {
 		var request struct {
 			GitHubRepositoryID int64 `json:"github_repository_id,omitempty"`
+			TaskID             int64 `json:"task_id,omitempty"`
 		}
 		if !decode(w, r, &request) {
 			return
 		}
-		if request.GitHubRepositoryID < 0 {
-			http.Error(w, "invalid GitHub repository ID", http.StatusBadRequest)
+		if request.GitHubRepositoryID < 0 || request.TaskID < 0 || (request.TaskID != 0 && request.GitHubRepositoryID != 0) {
+			http.Error(w, "invalid task claim selector", http.StatusBadRequest)
 			return
 		}
-		task, err := tasks.Claim(r.Context(), request.GitHubRepositoryID)
+		var task store.Task
+		var err error
+		if request.TaskID != 0 {
+			task, err = tasks.ClaimLocalTask(r.Context(), request.TaskID)
+		} else {
+			task, err = tasks.Claim(r.Context(), request.GitHubRepositoryID)
+		}
 		if errors.Is(err, sql.ErrNoRows) {
 			w.WriteHeader(http.StatusNoContent)
 			return

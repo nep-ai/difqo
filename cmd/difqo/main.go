@@ -52,7 +52,8 @@ func run(args []string) error {
 	flags := flag.NewFlagSet(args[0], flag.ContinueOnError)
 	port := flags.Int("port", 8765, "loopback API port")
 	var repo *string
-	var githubRepositoryID int64
+	var githubRepositoryID, taskID int64
+	var preflight bool
 	var webPath, artifactPath, projectsPath, workerProject, bindingVersion, slackFixture, slackRelay string
 	var options execution.Options
 	switch args[0] {
@@ -68,6 +69,8 @@ func run(args []string) error {
 		flags.StringVar(&workerProject, "project", "", "claim snapshot-review runs for this registered project")
 		flags.StringVar(&bindingVersion, "binding-version", "", "binding version of the registered project checkout")
 		flags.Int64Var(&githubRepositoryID, "github-repository-id", 0, "claim tasks for this enrolled GitHub repository only")
+		flags.Int64Var(&taskID, "task", 0, "claim only the selected local goal ID")
+		flags.BoolVar(&preflight, "preflight", false, "validate Codex worker options without claiming a goal")
 		flags.StringVar(&options.Image, "codex-image", "", "local container image for Codex execution")
 		flags.StringVar(&options.Runtime, "container-runtime", "", "auto, docker, podman, or a compatible CLI executable (default auto)")
 		flags.BoolVar(&options.DisableSELinuxLabel, "container-selinux-label-disable", false, "opt out of Podman SELinux labeling for Codex containers")
@@ -97,6 +100,12 @@ func run(args []string) error {
 		if githubRepositoryID < 0 || (githubRepositoryID > 0 && options.Image == "") {
 			return errors.New("GitHub tasks require a positive -github-repository-id and Codex execution options")
 		}
+		if taskID < 0 || (taskID > 0 && (githubRepositoryID != 0 || workerProject != "" || bindingVersion != "")) {
+			return errors.New("-task requires a positive local goal ID and cannot be combined with GitHub or specialist selectors")
+		}
+		if preflight && (options.Image == "" || taskID != 0 || githubRepositoryID != 0 || workerProject != "" || bindingVersion != "") {
+			return errors.New("-preflight requires local Codex execution options without a claim selector")
+		}
 		ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 		defer cancel()
 		var project store.SpecialistProject
@@ -124,7 +133,10 @@ func run(args []string) error {
 			}
 			runOptions = &options
 		}
-		return worker.Run(ctx, "http://"+address, *repo, runOptions, githubRepositoryID, project)
+		if preflight {
+			return nil
+		}
+		return worker.Run(ctx, "http://"+address, *repo, runOptions, githubRepositoryID, taskID, project)
 	}
 
 	dsn := os.Getenv("DIFQO_DATABASE_URL")

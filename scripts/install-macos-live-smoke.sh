@@ -45,12 +45,17 @@ trap cleanup EXIT
 url=http://127.0.0.1:8765
 curl --noproxy '*' -fsS --max-time 8 "$url/" | grep -F 'id="root"' >/dev/null
 curl --noproxy '*' -fsS --max-time 8 "$url/tasks" \
+  -H 'Content-Type: application/json' -d '{"goal":"Leave this earlier goal queued"}' > "$scratch/earlier-goal"
+curl --noproxy '*' -fsS --max-time 8 "$url/tasks" \
   -H 'Content-Type: application/json' -d '{"goal":"Verify the synthetic pilot repository"}' > "$scratch/goal"
 task_id=$(python3 -c 'import json,sys; print(json.load(sys.stdin)["id"])' < "$scratch/goal")
 git init -q "$scratch/repo"
 git -C "$scratch/repo" -c user.name=Fixture -c user.email=fixture@example.invalid \
   -c commit.gpgSign=false commit --allow-empty -qm 'Synthetic pilot'
-"$release/bin/difqo" worker -repo "$scratch/repo"
+"$release/bin/difqo" worker -repo "$scratch/repo" -task "$task_id"
+earlier_id=$(python3 -c 'import json,sys; print(json.load(sys.stdin)["id"])' < "$scratch/earlier-goal")
+curl --noproxy '*' -fsS --max-time 8 "$url/tasks/$earlier_id" |
+  python3 -c 'import json,sys; assert json.load(sys.stdin)["status"] == "queued"'
 pidfile="$HOME/Library/Application Support/Difqo/postgres-18/data/postmaster.pid"
 old_pid=$(head -n 1 "$pidfile")
 "$service" restart

@@ -141,23 +141,27 @@ func scanTask(row interface{ Scan(...any) error }) (Task, error) {
 }
 
 func (s Tasks) Claim(ctx context.Context, githubRepositoryID int64) (Task, error) {
-	return s.claimFor(ctx, githubRepositoryID, SpecialistProject{})
+	return s.claimFor(ctx, githubRepositoryID, SpecialistProject{}, 0)
+}
+
+func (s Tasks) ClaimLocalTask(ctx context.Context, id int64) (Task, error) {
+	return s.claimFor(ctx, 0, SpecialistProject{}, id)
 }
 
 func (s Tasks) ClaimProject(ctx context.Context, project SpecialistProject) (Task, error) {
-	return s.claimFor(ctx, 0, project)
+	return s.claimFor(ctx, 0, project, 0)
 }
 
-func (s Tasks) claimFor(ctx context.Context, githubRepositoryID int64, project SpecialistProject) (Task, error) {
+func (s Tasks) claimFor(ctx context.Context, githubRepositoryID int64, project SpecialistProject, id int64) (Task, error) {
 	for {
-		task, retry, err := s.claim(ctx, githubRepositoryID, project)
+		task, retry, err := s.claim(ctx, githubRepositoryID, project, id)
 		if !retry {
 			return task, err
 		}
 	}
 }
 
-func (s Tasks) claim(ctx context.Context, githubRepositoryID int64, project SpecialistProject) (Task, bool, error) {
+func (s Tasks) claim(ctx context.Context, githubRepositoryID int64, project SpecialistProject, id int64) (Task, bool, error) {
 	tx, err := s.DB.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelReadCommitted})
 	if err != nil {
 		return Task{}, false, err
@@ -175,7 +179,8 @@ func (s Tasks) claim(ctx context.Context, githubRepositoryID int64, project Spec
 			SELECT attempt_number, lease_expires_at, completed_at
 			FROM attempts WHERE task_id = t.id ORDER BY attempt_number DESC LIMIT 1
 		) a ON true
-		WHERE ((sr.task_id IS NULL AND $2 = '' AND COALESCE(g.repository_id, 0) = $6) OR (
+		WHERE ($7::bigint = 0 OR t.id = $7)
+		AND ((sr.task_id IS NULL AND $2 = '' AND COALESCE(g.repository_id, 0) = $6) OR (
 			g.task_id IS NULL AND sr.project->>'id' = $2 AND sr.project->>'binding' = $3
 			AND approved.configuration->>'profile' = $4 AND approved.configuration->>'access' = $5
 			AND EXISTS (
@@ -191,7 +196,7 @@ func (s Tasks) claim(ctx context.Context, githubRepositoryID int64, project Spec
 			AND a.attempt_number < $1
 		))
 		ORDER BY t.id LIMIT 1 FOR UPDATE OF t SKIP LOCKED`,
-		maxAttempts, project.ID, project.Binding, specialistProfile, specialistAccess, githubRepositoryID).Scan(&taskID)
+		maxAttempts, project.ID, project.Binding, specialistProfile, specialistAccess, githubRepositoryID, id).Scan(&taskID)
 	if err != nil {
 		return Task{}, false, err
 	}

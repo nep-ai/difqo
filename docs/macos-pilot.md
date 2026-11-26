@@ -25,6 +25,18 @@ testing a rerun.
 
 ## Verify the first patch
 
+On a clean installed Apple silicon Mac, open **Worker setup** in Chief of
+Staff. Start Docker Desktop and run the displayed setup command in Terminal.
+It builds the bundled Codex image and prompts for device sign-in with a
+dedicated credential directory. Load and queue the sample goal, then run the
+command displayed on its queued card. It creates a disposable Git repository
+and claims only the selected goal. The sample check requires
+`greeting.txt` to contain `after`. In **Review patch**, confirm the expected
+diff, then use **Rerun check** and approve the patch after the check passes.
+
+For a manual run with a saved decision or a supported alternate runtime, use
+the steps below.
+
 The installer reaches the UI independently of container tools. For a Codex
 goal, start Docker Desktop, make Git available, and use a dedicated Codex
 sign-in. Use a disposable repository and material that is safe to send to

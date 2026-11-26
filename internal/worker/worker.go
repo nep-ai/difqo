@@ -15,13 +15,14 @@ import (
 	"github.com/nep-ai/difqo/internal/store"
 )
 
-func Run(ctx context.Context, address string, repo string, executionOptions *execution.Options, githubRepositoryID int64, project store.SpecialistProject) error {
+func Run(ctx context.Context, address string, repo string, executionOptions *execution.Options, githubRepositoryID, taskID int64, project store.SpecialistProject) error {
 	client := &http.Client{Timeout: 10 * time.Second}
 	var task store.Task
 	endpoint := "/tasks/claim"
 	var claim any = struct {
 		GitHubRepositoryID int64 `json:"github_repository_id,omitempty"`
-	}{githubRepositoryID}
+		TaskID             int64 `json:"task_id,omitempty"`
+	}{githubRepositoryID, taskID}
 	if project.ID != "" {
 		endpoint = "/specialist-runs/claim"
 		claim = struct {
@@ -30,8 +31,14 @@ func Run(ctx context.Context, address string, repo string, executionOptions *exe
 		}{Project: project.ID, Binding: project.Binding}
 	}
 	err := request(ctx, client, "POST", address+endpoint, claim, &task)
-	if err != nil || task.Attempt == nil {
+	if err != nil {
 		return err
+	}
+	if task.Attempt == nil {
+		if taskID != 0 {
+			return errors.New("the selected goal is unavailable for a local claim; check its status in Chief of Staff")
+		}
+		return nil
 	}
 
 	attemptURL := fmt.Sprintf("%s/attempts/%d", address, task.Attempt.ID)
