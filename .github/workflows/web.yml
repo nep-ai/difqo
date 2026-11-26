@@ -79,6 +79,7 @@ jobs:
           test -x extracted/bin/service-macos
           test -x extracted/bin/first-goal-macos
           cmp "$GITHUB_WORKSPACE/scripts/first-goal-macos.sh" extracted/bin/first-goal-macos
+          python3 "$GITHUB_WORKSPACE/scripts/first-goal-macos-smoke.py" "$PWD/extracted/bin/first-goal-macos"
           python3 "$GITHUB_WORKSPACE/scripts/service-macos-smoke.py" "$PWD/extracted/bin/service-macos"
           test -x extracted/bin/provision-postgres-macos
           cmp "$GITHUB_WORKSPACE/scripts/provision-postgres-macos.sh" extracted/bin/provision-postgres-macos
