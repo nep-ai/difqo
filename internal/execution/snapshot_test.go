@@ -29,6 +29,10 @@ func TestCheckedCandidate(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
+	callerIndex := filepath.Join(root, "caller-index")
+	write(callerIndex, "caller index sentinel")
+	t.Setenv("GIT_INDEX_FILE", callerIndex)
+	t.Setenv("GIT_DIR", filepath.Join(root, "caller-git-dir"))
 	run(root, "init", "--template=", "--initial-branch=difqo-checked-candidate", source)
 	write(filepath.Join(source, "greeting"), "before\n")
 	run(source, "add", "greeting")
@@ -81,5 +85,9 @@ func TestCheckedCandidate(t *testing.T) {
 	snapshot := store.Snapshot{Base: base, Candidate: strings.Repeat("a", len(candidate))}
 	if err := prepareCheckWorkspace(ctx, baseRepo, filepath.Join(root, "mismatch"), snapshot, patch); err == nil {
 		t.Fatal("accepted a checkout that does not match the recorded candidate")
+	}
+	content, err := os.ReadFile(callerIndex)
+	if err != nil || string(content) != "caller index sentinel" {
+		t.Fatalf("caller index changed: %q, err = %v", content, err)
 	}
 }
