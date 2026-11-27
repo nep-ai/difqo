@@ -395,9 +395,9 @@ with TemporaryDirectory(prefix='difqo-smoke-') as scratch:
             _, decision = api('/project-decision', 'POST', {'body': 'Use the line after in greeting.txt.'})
             assert api('/project-decision') == (200, decision)
             base = run('git', '-C', fixture, 'rev-parse', 'HEAD').strip()
-            check = ('test "$(git rev-parse HEAD)" = ' + base +
+            check = ('test "$(git rev-parse HEAD)" != ' + base +
                      ' && test "$(cat greeting.txt)" = after && test "$(cat untracked.txt)" = "new file"'
-                     ' && test ! -e /codex-home && printf "greeting check passed\\n"')
+                     ' && test ! -e /codex-home && git rev-parse HEAD')
 
             def worker_args(image, command):
                 return [binary, 'worker', '-port', port, '-repo', fixture,
@@ -442,19 +442,22 @@ with TemporaryDirectory(prefix='difqo-smoke-') as scratch:
             evidence = artifacts / artifact_ref
             patch = (evidence / 'change.diff').read_text()
             assert '-before\n+after\n' in patch and '+new file\n' in patch
-            assert (evidence / 'check.log').read_text() == 'greeting check passed\n'
+            snapshot = outcome['snapshot']
+            candidate = snapshot['candidate']
+            assert candidate != base
+            assert run('git', '-C', evidence / 'base.git', 'rev-parse', f'{candidate}^').strip() == base
+            assert (evidence / 'check.log').read_text() == candidate + '\n'
             evidence_url = f"http://127.0.0.1:{port}/tasks/{executed['id']}/evidence/"
             with urllib.request.urlopen(evidence_url + 'change.diff', timeout=2) as response:
                 assert response.read().decode() == patch
                 assert response.headers.get_content_type() == 'text/plain'
             with urllib.request.urlopen(evidence_url + 'check.log', timeout=2) as response:
-                assert response.read().decode() == 'greeting check passed\n'
+                assert response.read().decode() == candidate + '\n'
             assert api(f"/tasks/{executed['id']}/evidence/auth.json")[0] == 404
             assert greeting.read_text() == 'before\n' and not (fixture / 'untracked.txt').exists()
             assert not (evidence / 'workspace').exists()
             assert not (evidence / 'check-workspace').exists()
             assert executed['decision'] == decision
-            snapshot = outcome['snapshot']
             assert snapshot['base'] == base and snapshot['command'] == check
             image_id = run(runtime, 'image', 'inspect', '--format', '{{.Id}}', fixture_image).strip()
             assert snapshot['image'] == 'sha256:' + image_id.removeprefix('sha256:')
@@ -486,7 +489,7 @@ with TemporaryDirectory(prefix='difqo-smoke-') as scratch:
             assert api(review_path + '/rerun', 'POST', {'patch_sha256': 'changed'})[0] == 409
             assert api(review_path + '/rerun', 'POST', identity, timeout=55)[0] == 204
             passed = api(review_path)[1]['check']
-            assert passed['status'] == 'passed' and passed['output'] == 'greeting check passed\n'
+            assert passed['status'] == 'passed' and passed['output'] == candidate + '\n'
 
             # An interrupted newer check cannot fall back to a previous pass.
             attempt_id = int(executed['attempt']['id'])

@@ -11,13 +11,16 @@ changes between execution and review.
 
 Save an append-only project decision revision in PostgreSQL and bind the latest
 saved revision to each goal at submission. Pass the bound revision to Codex.
-Record the base commit, patch SHA-256, local image ID, and configured check
+Record the base commit, candidate commit, patch SHA-256, local image ID, and configured check
 command with the completed attempt. Keep the shallow base and original
 artifacts in the private host artifact directory.
 
-The original check for a captured patch and each review rerun independently
-clone the saved base, verify its commit, and apply the patch in a temporary
-workspace. The check runs in the same pinned local image without networking
+Build the candidate commit by applying the captured patch to the base tree
+in a temporary index, with the saved base as its parent. Keep the candidate
+in the same private per-attempt repository. The original check and each
+review rerun clone and verify the exact candidate SHA in a temporary
+workspace. Older attempts without a candidate SHA still reconstruct the
+saved base and patch. The check runs in the same pinned local image without networking
 or mounted Codex credentials. The review API uses the same execution code as
 the worker and verifies the patch digest before serving, rerunning, or
 approving the patch.
