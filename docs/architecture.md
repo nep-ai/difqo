@@ -43,10 +43,10 @@ flowchart LR
     Worker -->|"Read HEAD or make a shallow clone"| Repo["Operator-selected Git checkout"]
     Worker -->|"In Codex mode, validate runtime, image, and sandbox before claim"| Runtime["Docker, Podman, or compatible container CLI"]
     Runtime -->|"Run one App Server turn over stdio"| Codex["Disposable execution workspace"]
-    Worker -->|"Capture base, diff, and check log"| Artifacts["Host artifact directory"]
+    Worker -->|"Capture base, candidate commit, diff, and check log"| Artifacts["Host artifact directory"]
     Server -->|"Read and verify attempt-bound evidence"| Artifacts
     Server -->|"Select a runtime with the saved local image"| Runtime
-    Runtime -->|"Rerun the pinned check on the original base plus the patch"| Check["Disposable check container"]
+    Runtime -->|"Rerun the pinned check at the recorded candidate commit"| Check["Disposable check container"]
 ```
 
 The local operator starts the server and starts a worker with a checkout path.
@@ -103,9 +103,10 @@ latest attempts. Submitting a goal uses the existing task intake. The browser
 polls for state changes and expands available worker artifacts in a project file.
 The project file links to patch review. Goals capture the latest saved
 decision revision at submission. For a captured patch, the review shows that
-decision, the original base, the patch digest, and the check command and logs.
-The server reruns the check in a disposable container reconstructed from the
-captured base and digest-verified patch. PostgreSQL records approval for the
+decision, the original base, the checked candidate, the patch digest, and the
+check command and logs. The server checks out the recorded candidate commit
+for reruns in a disposable container. Older attempts reconstruct the base
+and digest-verified patch. PostgreSQL records approval for the
 attempt and its latest passing rerun. The reviewed patch is available for
 manual application. See [ADR 0005](adr/0005-exact-patch-review.md).
 

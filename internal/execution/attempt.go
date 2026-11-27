@@ -127,7 +127,12 @@ func (o Options) Run(ctx context.Context, repo string, task store.Task) store.Re
 		return c.capture(ctx, w, w, o.Check)
 	}
 	if len(patch) != 0 {
-		snapshot := store.Snapshot{Base: base, PatchSHA256: patchDigest(patch), Image: c.runtime.imageID, Command: o.Check}
+		candidate, err := recordCandidate(ctx, baseRepo, base, patch)
+		if err != nil {
+			_ = os.WriteFile(filepath.Join(dir, "execution.log"), []byte(err.Error()+"\n"), 0o600)
+			return store.Result{ExitCode: 125, Output: "could not create the candidate commit", Artifacts: result.Artifacts}
+		}
+		snapshot := store.Snapshot{Base: base, Candidate: candidate, PatchSHA256: patchDigest(patch), Image: c.runtime.imageID, Command: o.Check}
 		if !ValidSnapshot(snapshot) {
 			return store.Result{ExitCode: 125, Output: "could not record the review snapshot", Artifacts: result.Artifacts}
 		}

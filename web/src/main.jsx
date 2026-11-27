@@ -158,6 +158,7 @@ function PatchReview({ goal }) {
     <dl className="facts review-facts">
       <dt>Project decision</dt><dd>{goal.decision ? <>Revision {goal.decision.id}<p>{goal.decision.body}</p></> : 'No decision was saved for this goal.'}</dd>
       <dt>Base commit</dt><dd><code>{snapshot.base}</code></dd>
+      {snapshot.candidate && <><dt>Checked candidate</dt><dd><code>{snapshot.candidate}</code></dd></>}
       <dt>Diff SHA-256</dt><dd><code>{snapshot.patch_sha256}</code></dd>
       <dt>Check command</dt><dd><code>{snapshot.command}</code></dd>
       <dt>Original check</dt><dd>{result.exit_code === 0 ? 'Passed' : 'Exit ' + result.exit_code}</dd>

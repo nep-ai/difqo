@@ -30,6 +30,7 @@ func (s Tasks) SaveProjectDecision(ctx context.Context, body string, project Spe
 
 type Snapshot struct {
 	Base        string `json:"base"`
+	Candidate   string `json:"candidate,omitempty"`
 	PatchSHA256 string `json:"patch_sha256"`
 	Image       string `json:"image"`
 	Command     string `json:"command"`
