@@ -34,6 +34,15 @@ Git repository, claims the selected goal, and checks that `greeting.txt`
 contains `after`. In **Review patch**, inspect the diff, select **Rerun check**,
 and approve the patch once it passes.
 
+### Talk to Chief of Staff
+
+After signing in with ChatGPT, send a message or attach a file from the
+main composer. Chief of Staff keeps the conversation across page reloads.
+To submit an existing coding goal manually, use **Project tools → Queue a
+coding goal**. The installed CLI can send to the same conversation with
+`difqo chat "Explain these symptoms"` or
+`difqo chat -file screenshot.png "What do you see?"`.
+
 ### Connect the staging integrations
 
 - In **Connections → Slack**, enter the Slack pilot enrollment code and

@@ -15,6 +15,7 @@ const (
 
 type Task struct {
 	ID          int64          `json:"id"`
+	CreatedAt   time.Time      `json:"created_at"`
 	Goal        string         `json:"goal"`
 	Status      string         `json:"status"`
 	Decision    *Decision      `json:"decision,omitempty"`
@@ -89,10 +90,10 @@ func insertTask(ctx context.Context, db interface {
 		WITH saved AS (
 			INSERT INTO tasks (goal, decision_id, attachment_metadata, attachments)
 			VALUES ($1, (SELECT id FROM project_decisions WHERE project_id = '' ORDER BY id DESC LIMIT 1), $2::jsonb, $3::jsonb)
-			RETURNING id, decision_id
+			RETURNING id, decision_id, created_at
 		)
-		SELECT saved.id, d.id, d.body FROM saved LEFT JOIN project_decisions d ON d.id = saved.decision_id`, goal, metadata, raw).
-		Scan(&task.ID, &decisionID, &decisionBody)
+		SELECT saved.id, d.id, d.body, saved.created_at FROM saved LEFT JOIN project_decisions d ON d.id = saved.decision_id`, goal, metadata, raw).
+		Scan(&task.ID, &decisionID, &decisionBody, &task.CreatedAt)
 	if err == nil && decisionID != nil {
 		task.Decision = &Decision{ID: *decisionID, Body: *decisionBody}
 	}
@@ -100,7 +101,7 @@ func insertTask(ctx context.Context, db interface {
 }
 
 const taskQuery = `
-		SELECT t.id, t.goal,
+		SELECT t.id, t.goal, t.created_at,
 			CASE
 				WHEN a.blocked THEN 'blocked'
 				WHEN a.completed_at IS NOT NULL THEN 'completed'
@@ -150,7 +151,7 @@ func scanTask(row interface{ Scan(...any) error }) (Task, error) {
 	var decisionBody *string
 	var snapshot, run, attachments []byte
 	err := row.Scan(
-		&task.ID, &task.Goal, &task.Status, &attemptID, &number, &leaseExpiresAt,
+		&task.ID, &task.Goal, &task.CreatedAt, &task.Status, &attemptID, &number, &leaseExpiresAt,
 		&attempt.CompletedAt, &exitCode, &output, &blocked, &artifacts, &snapshot, &decisionID, &decisionBody, &run, &attachments)
 	if err == nil && decisionID != nil {
 		task.Decision = &Decision{ID: *decisionID, Body: *decisionBody}

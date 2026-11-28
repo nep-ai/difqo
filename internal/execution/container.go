@@ -58,14 +58,21 @@ func (c container) remove() {
 }
 
 func (c container) codex(ctx context.Context, authHome, goal string, attachments ...store.Attachment) (string, error) {
+	return c.codexTurn(ctx, authHome, func(in io.Writer, out io.Reader) error {
+		return runCodex(in, out, goal, attachments)
+	})
+}
+
+func (c container) codexTurn(ctx context.Context, authHome string, run func(io.Writer, io.Reader) error, overrides ...string) (string, error) {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
-	cmd := c.command(ctx, authHome,
+	args := []string{
 		"timeout", "-k", "5s", "120s", "codex", "app-server", "--stdio",
 		"-c", `cli_auth_credentials_store="file"`,
 		"-c", `default_permissions="difqo"`,
 		"-c", codexPermissions,
-	)
+	}
+	cmd := c.command(ctx, authHome, append(args, overrides...)...)
 	var stderr bytes.Buffer
 	var truncated bool
 	cmd.Stderr = &cappedOutput{writer: &stderr, remaining: 64 << 10, truncated: &truncated}
@@ -87,7 +94,7 @@ func (c container) codex(ctx context.Context, authHome, goal string, attachments
 		_ = stdout.Close()
 	})
 	defer stop()
-	err = runCodex(stdin, stdout, goal, attachments)
+	err = run(stdin, stdout)
 	cancel()
 	waitErr := cmd.Wait()
 	if err == nil || errors.Is(err, ErrAuthentication) {

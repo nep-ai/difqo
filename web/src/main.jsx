@@ -374,8 +374,41 @@ function encodeAttachment(file) {
   })
 }
 
-function Chat({ goals, connection, submit, addTask, setupDialog, setupOpen, openSetup, closeSetup }) {
+function CodingTurn({ goal, openSetup }) {
+  return <>
+    <article className="turn user" aria-label="You"><div className="turn-content">
+      <p>{goal.goal}</p>
+      {goal.attachments?.length > 0 && <ul className="sent-files" aria-label="Attachments">
+        {goal.attachments.map((file, index) => <li key={index}>{file.name}</li>)}
+      </ul>}
+    </div></article>
+    <article className="turn chief" aria-label="Chief of Staff"><Mark /><div className="turn-content">
+      <strong className="speaker">Chief of Staff</strong><ProjectFile goal={goal} openSetup={openSetup} />
+    </div></article>
+  </>
+}
+
+function ChiefTurn({ turn }) {
+  return <>
+    <article className="turn user" aria-label="You"><div className="turn-content">
+      {turn.text && <p>{turn.text}</p>}
+      {turn.attachments?.length > 0 && <ul className="sent-files" aria-label="Attachments">
+        {turn.attachments.map((file, index) => <li key={index}>{file.name}</li>)}
+      </ul>}
+    </div></article>
+    <article className="turn chief" aria-label="Chief of Staff"><Mark /><div className="turn-content">
+      <strong className="speaker">Chief of Staff</strong>
+      {turn.state === 'running' && <p role="status">Thinking…</p>}
+      {turn.state === 'attention' && <p role="status">{turn.problem}</p>}
+      {turn.state === 'completed' && <p>{turn.reply}</p>}
+    </div></article>
+  </>
+}
+
+function Chat({ goals, chiefTurns, chiefAvailable, connection, submit, addTask, setupDialog, setupOpen, openSetup, closeSetup }) {
   const [draft, setDraft] = useState('')
+  const [codingGoal, setCodingGoal] = useState(false)
+  const requestID = useRef(null)
   const [files, setFiles] = useState([])
   const filePicker = useRef(null)
   const [showSpecialists, setShowSpecialists] = useState(false)
@@ -388,15 +421,18 @@ function Chat({ goals, connection, submit, addTask, setupDialog, setupOpen, open
   const submitted = useRef(false)
   const openedHistory = useRef(false)
   const latest = goals.at(-1)?.id
+  const latestChief = chiefTurns.at(-1)
+  const useChief = chiefAvailable === true && !codingGoal
+  const chiefBusy = useChief && latestChief?.state === 'running'
 
   useEffect(() => {
-    if (latest && (!openedHistory.current || submitted.current)) {
+    if ((latest || latestChief) && (!openedHistory.current || submitted.current)) {
       openedHistory.current = true
       end.current?.scrollIntoView({ block: 'nearest' })
       if (submitted.current) composer.current?.focus({ preventScroll: true })
       submitted.current = false
     }
-  }, [latest])
+  }, [latest, latestChief?.id])
 
   function attach(selected) {
     if (sending || selected.length === 0) return
@@ -412,8 +448,8 @@ function Chat({ goals, connection, submit, addTask, setupDialog, setupOpen, open
 
   async function send(event) {
     event.preventDefault()
-    if (sending || connection !== 'ready') return
-    if (!draft.trim()) {
+    if (sending || chiefBusy || chiefAvailable === null || connection !== 'ready') return
+    if (!draft.trim() && (!useChief || files.length === 0)) {
       if (files.length) setError('What would you like Chief of Staff to do with these files?')
       return
     }
@@ -422,12 +458,18 @@ function Chat({ goals, connection, submit, addTask, setupDialog, setupOpen, open
     setError('')
     try {
       submitted.current = true
-      await submit(goal, await Promise.all(files.map(encodeAttachment)))
+      if (!requestID.current || requestID.current.goal !== goal || requestID.current.files !== files ||
+        requestID.current.useChief !== useChief) {
+        requestID.current = { id: crypto.randomUUID(), goal, files, useChief }
+      }
+      await submit(goal, await Promise.all(files.map(encodeAttachment)), useChief, requestID.current.id)
+      requestID.current = null
       setDraft('')
       setFiles([])
+      setCodingGoal(false)
     } catch (err) {
       submitted.current = false
-      setError(err instanceof RequestError && err.status === 400
+      setError(err instanceof RequestError && [400, 409].includes(err.status)
         ? err.message
         : 'Couldn’t confirm submission. Check the conversation before retrying. Your draft is still here.')
     } finally {
@@ -441,26 +483,25 @@ function Chat({ goals, connection, submit, addTask, setupDialog, setupOpen, open
       <summary>Project tools</summary>
       <div className="actions">
         <ProjectDecision dialog={decisionDialog} />
+        {chiefAvailable && <button className="subtle" type="button" aria-pressed={codingGoal} disabled={sending}
+          onClick={() => { setCodingGoal(value => !value); composer.current?.focus() }}>Queue a coding goal</button>}
         <button className="subtle" type="button" ref={specialistTrigger} aria-expanded={showSpecialists}
           onClick={() => setShowSpecialists(open => !open)}>Specialists</button>
       </div>
     </details>
-    {goals.length ? <section className="conversation" aria-label="Conversation">
-      {goals.map(goal => <React.Fragment key={goal.id}>
-        <article className="turn user" aria-label="You"><div className="turn-content"><p>{goal.goal}</p>
-          {goal.attachments?.length > 0 && <ul className="sent-files" aria-label="Attachments">
-            {goal.attachments.map((file, index) => <li key={index}>{file.name}</li>)}
-          </ul>}
-        </div></article>
-        <article className="turn chief" aria-label="Chief of Staff"><Mark /><div className="turn-content">
-          <strong className="speaker">Chief of Staff</strong><ProjectFile goal={goal} openSetup={openSetup} />
-        </div></article>
-      </React.Fragment>)}
+    {goals.length || chiefTurns.length ? <section className="conversation" aria-label="Conversation">
+      {[
+        ...goals.map(goal => ({ item: goal, kind: 'goal' })),
+        ...chiefTurns.map(turn => ({ item: turn, kind: 'chat' })),
+      ].sort((a, b) => Date.parse(a.item.created_at) - Date.parse(b.item.created_at)).map(({ item, kind }) =>
+        kind === 'goal'
+          ? <CodingTurn key={'goal-' + item.id} goal={item} openSetup={openSetup} />
+          : <ChiefTurn key={'chat-' + item.id} turn={item} />)}
       <div ref={end} />
     </section> : <section className="welcome">
       <Mark />
-      <h2>Run your first coding goal</h2>
-      <p>Set up a local Codex worker, then queue a change for a Git repository. The worker runs the goal and posts its patch and check here.</p>
+      <h2>{chiefAvailable ? 'How can I help?' : 'Run your first coding goal'}</h2>
+      <p>{chiefAvailable ? 'Write a message or attach a file to get started.' : 'Set up a local Codex worker to run a coding goal and review its patch here.'}</p>
       <button className="subtle" type="button" onClick={openSetup}>Set up connections</button>
     </section>}
     {showSpecialists && <Specialists request={request} mark={<Mark />} onQueued={addTask} close={() => {
@@ -479,7 +520,7 @@ function Chat({ goals, connection, submit, addTask, setupDialog, setupOpen, open
           </ul>}
           <label htmlFor="message" className="sr-only">Message Chief of Staff</label>
           <textarea id="message" ref={composer} rows={2} maxLength={4096} value={draft}
-            onChange={event => setDraft(event.target.value)} readOnly={sending} placeholder="Message Chief of Staff"
+            onChange={event => setDraft(event.target.value)} readOnly={sending} placeholder={codingGoal ? 'Describe a repository change' : 'Message Chief of Staff'}
             onPaste={event => {
               const pasted = Array.from(event.clipboardData.files)
               if (pasted.length) {
@@ -499,7 +540,7 @@ function Chat({ goals, connection, submit, addTask, setupDialog, setupOpen, open
               event.target.value = ''
             }} />
             <button type="button" className="subtle" disabled={sending} onClick={() => filePicker.current.click()}>Attach</button>
-            <button className="primary" disabled={(!draft.trim() && files.length === 0) || sending || connection !== 'ready'}>{sending ? 'Sending…' : 'Send'}</button>
+            <button className="primary" disabled={(!draft.trim() && files.length === 0) || sending || chiefBusy || chiefAvailable === null || connection !== 'ready'}>{sending ? 'Sending…' : 'Send'}</button>
           </div>
         </div>
       </form>
@@ -507,6 +548,7 @@ function Chat({ goals, connection, submit, addTask, setupDialog, setupOpen, open
     <Connections dialog={setupDialog} open={setupOpen} onClose={closeSetup} request={request}
       sandboxGuide={sandboxGuide} sampleDisabled={sending || !!draft.trim() || files.length > 0} onSample={() => {
         setDraft(sampleGoal)
+        setCodingGoal(true)
         setupDialog.current.close()
         composer.current?.focus()
       }} />
@@ -516,6 +558,8 @@ function Chat({ goals, connection, submit, addTask, setupDialog, setupOpen, open
 function App() {
   const [connection, setConnection] = useState('checking')
   const [goals, setGoals] = useState([])
+  const [chiefTurns, setChiefTurns] = useState([])
+  const [chiefAvailable, setChiefAvailable] = useState(null)
   const generation = useRef(0)
   const setupDialog = useRef(null)
   const [setupOpen, setSetupOpen] = useState(false)
@@ -530,11 +574,20 @@ function App() {
     async function refresh() {
       const current = generation.current
       try {
-        const response = await request('/tasks', { signal: controller.signal })
+        const [response, conversation] = await Promise.all([
+          request('/tasks', { signal: controller.signal }),
+          request('/chief/conversation', { signal: controller.signal }).catch(error => {
+            if (error instanceof RequestError && error.status === 404) return null
+            throw error
+          }),
+        ])
         const recent = await response.json()
-        if (!Array.isArray(recent)) throw new Error('Invalid task history')
+        const turns = conversation ? await conversation.json() : []
+        if (!Array.isArray(recent) || !Array.isArray(turns)) throw new Error('Invalid task history')
         if (!controller.signal.aborted && current === generation.current) {
           setGoals(recent.toReversed())
+          setChiefTurns(turns.toReversed())
+          setChiefAvailable(!!conversation)
           setConnection('ready')
         }
       } catch {
@@ -550,13 +603,19 @@ function App() {
     }
   }, [])
 
-  async function submit(goal, attachments) {
-    const response = await request('/tasks', {
+  async function submit(goal, attachments, useChief, requestID) {
+    const response = await request(useChief ? '/chief/conversation' : '/tasks', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ goal, attachments }),
+      body: JSON.stringify(useChief ? { text: goal, attachments, request_id: requestID } : { goal, attachments }),
     })
-    addTask(await response.json())
+    const saved = await response.json()
+    if (useChief) {
+      generation.current++
+      setChiefTurns(current => current.some(turn => turn.id === saved.id) ? current : [...current, saved].slice(-100))
+    } else {
+      addTask(saved)
+    }
   }
 
   function addTask(saved) {
@@ -575,7 +634,7 @@ function App() {
       </div>
     </header>
     {connection === 'offline' && <p className="connection-note" role="status">Couldn’t reach the local service. Check that Difqo and PostgreSQL are running. This page reconnects automatically.</p>}
-    <Chat goals={goals} connection={connection} submit={submit} addTask={addTask} setupDialog={setupDialog}
+    <Chat goals={goals} chiefTurns={chiefTurns} chiefAvailable={chiefAvailable} connection={connection} submit={submit} addTask={addTask} setupDialog={setupDialog}
       setupOpen={setupOpen} openSetup={openSetup} closeSetup={() => setSetupOpen(false)} />
   </div>
 }

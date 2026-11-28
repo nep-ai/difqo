@@ -58,6 +58,8 @@ jobs:
           export DIFQO_FRESH_DATABASE_URL="postgres://postgres:smoke-test@127.0.0.1:${POSTGRES_PORT}/difqo_fresh?sslmode=disable"
           export DIFQO_LEGACY_DATABASE_URL="postgres://postgres:smoke-test@127.0.0.1:${POSTGRES_PORT}/difqo_legacy?sslmode=disable"
           python3 scripts/database-setup-smoke.py bin/difqo migrations
+          DIFQO_CHIEF_TEST_DATABASE_URL="$DIFQO_FRESH_DATABASE_URL" \
+            go test -race -count=1 -run TestChiefConversationPersistsAndReusesContext ./internal/controlplane
 
       - name: Test Slack relay pairing and local delivery
         env:
