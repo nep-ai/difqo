@@ -44,7 +44,7 @@ if [ "${1:-}" = run ] && [ "$#" -eq 1 ]; then
     *) fail 'Unknown service database mode.' ;;
   esac
   export DIFQO_DATABASE_URL
-  exec "$bin/difqo" server -web "$bin/../web" -artifacts "$support/artifacts"
+  exec "$bin/difqo" server -web "$bin/../web" -artifacts "$support/artifacts" -managed-setup "$state"
 fi
 
 [ "$#" -eq 1 ] || fail 'Usage: service-macos start|stop|status|pause|restart'

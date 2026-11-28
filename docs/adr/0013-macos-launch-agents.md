@@ -33,6 +33,14 @@ and startup under the same operation lock. Status distinguishes a healthy
 running service, unloaded jobs, intentional pause, and unhealthy or
 incomplete transitions.
 
+The installed server exposes bounded setup and sample-worker actions over the
+existing loopback interface. The server invokes the packaged worker helper
+with fixed arguments, surfaces the device prompt from the pinned Codex CLI,
+and checks the same Docker engine the LaunchAgent uses for reruns. The
+device authorization completes with OpenAI, and the worker credentials stay
+in the dedicated private Codex home. The sample runs against a disposable
+repository and claims the selected sample task.
+
 ## Consequences
 
 An explicit start is required after staging and, for a managed database,

@@ -8,7 +8,7 @@ fail() {
 }
 
 case "${1:-}" in
-  prepare) [ "$#" -eq 1 ] || fail 'Usage: first-goal-macos prepare' ;;
+  prepare|check) [ "$#" -eq 1 ] || fail 'Usage: first-goal-macos prepare|check' ;;
   run) [ "$#" -eq 2 ] && [[ "$2" =~ ^[1-9][0-9]*$ ]] || fail 'Usage: first-goal-macos run GOAL_ID' ;;
   *) fail 'Use first-goal-macos prepare or first-goal-macos run GOAL_ID.' ;;
 esac
@@ -40,10 +40,14 @@ codex_login() {
 
 if [ "$1" = prepare ]; then
   docker build -t "$image" "$bin/../containers/codex"
-  if ! codex_login status; then
+  if ! codex_login status 2>&1 | grep -Fxq 'Logged in using ChatGPT'; then
     codex_login -c 'cli_auth_credentials_store="file"' --device-auth
-    codex_login status
+    codex_login status 2>&1 | grep -Fxq 'Logged in using ChatGPT' || fail 'Sign in with ChatGPT and try again.'
   fi
+  selector=(-preflight)
+elif [ "$1" = check ]; then
+  docker image inspect "$image" >/dev/null 2>&1 || fail 'Use Sign in with ChatGPT to prepare the Codex image.'
+  codex_login status 2>&1 | grep -Fxq 'Logged in using ChatGPT' || fail 'Sign in with ChatGPT to connect Codex.'
   selector=(-preflight)
 else
   docker image inspect "$image" >/dev/null 2>&1 || fail 'Run the setup command in Chief of Staff to build the Codex image.'
@@ -63,7 +67,7 @@ git -C "$fixture" -c user.name='Difqo Pilot' -c user.email=pilot@example.invalid
   -codex-image "$image" -codex-home "$auth_home" -artifacts "$support/artifacts" \
   -check 'test "$(cat greeting.txt)" = after' ||
   fail 'Read the worker error above. For sandbox errors, follow the Docker sandbox link in Chief of Staff before retrying.'
-if [ "$1" = prepare ]; then
+if [ "$1" != run ]; then
   printf 'Worker preflight passed. Return to Chief of Staff to queue the sample goal.\n'
 else
   printf 'Return to Chief of Staff to see the result and rerun the check.\n'

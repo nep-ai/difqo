@@ -8,11 +8,13 @@ import (
 	"github.com/nep-ai/difqo/internal/store"
 )
 
-func registerSlackConnection(router *http.ServeMux, connections *slackintake.Connections) {
+func registerSlackConnection(router *http.ServeMux, connections *slackintake.Connections, requiresCode bool) {
 	respond := func(w http.ResponseWriter, view slackintake.ConnectionView, err error) {
 		w.Header().Set("Cache-Control", "no-store")
 		w.Header().Set("Referrer-Policy", "no-referrer")
 		switch {
+		case errors.Is(err, slackintake.ErrEnrollmentCode):
+			http.Error(w, err.Error(), http.StatusBadRequest)
 		case errors.Is(err, store.ErrSlackTransition):
 			http.Error(w, err.Error(), http.StatusConflict)
 		case errors.Is(err, slackintake.ErrRelayUnavailable):
@@ -25,10 +27,12 @@ func registerSlackConnection(router *http.ServeMux, connections *slackintake.Con
 	}
 	router.HandleFunc("GET /slack/connection", func(w http.ResponseWriter, r *http.Request) {
 		view, err := connections.Status(r.Context())
+		view.RequiresCode = requiresCode
 		respond(w, view, err)
 	})
 	router.HandleFunc("POST /slack/connection", func(w http.ResponseWriter, r *http.Request) {
 		var in struct {
+			Code       string             `json:"code"`
 			Action     string             `json:"action"`
 			PairingID  string             `json:"pairing_id"`
 			Generation int64              `json:"generation"`
@@ -41,7 +45,15 @@ func registerSlackConnection(router *http.ServeMux, connections *slackintake.Con
 		var err error
 		switch in.Action {
 		case "begin":
-			view, err = connections.Begin(r.Context())
+			if requiresCode {
+				if in.Code == "" {
+					http.Error(w, "Enter your Slack pilot enrollment code.", http.StatusBadRequest)
+					return
+				}
+				view, err = connections.BeginWithCode(r.Context(), in.Code)
+			} else {
+				view, err = connections.Begin(r.Context())
+			}
 		case "start_identity", "start_install", "approval_needed":
 			view, err = connections.OAuth(r.Context(), in.PairingID, in.Action)
 		case "refresh":
@@ -56,6 +68,7 @@ func registerSlackConnection(router *http.ServeMux, connections *slackintake.Con
 			http.Error(w, "unknown Slack connection action", http.StatusBadRequest)
 			return
 		}
+		view.RequiresCode = requiresCode
 		respond(w, view, err)
 	})
 }

@@ -30,6 +30,12 @@ A GitHub-only Connections deployment needs no relay database. When enabled
 alongside Slack, Slack retains its existing schema and readiness checks. See
 the [GitHub pilot runbook](../github-pilot.md) for configuration and testing.
 
+The installed staging pilot accepts the enrollment proof through the local
+Connections panel and keeps it in the per-user private service directory.
+The panel exposes the approved repository and an explicit sync action. A
+local disconnect removes the proof and preserves the cursor and previously
+imported tasks. Installation tokens stay in memory during sync.
+
 ## Tradeoffs
 
 A deployment-managed grant fits the first single-owner pilot and avoids

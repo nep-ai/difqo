@@ -2,6 +2,7 @@ package controlplane
 
 import (
 	"bytes"
+	"context"
 	"database/sql"
 	"encoding/json"
 	"errors"
@@ -19,6 +20,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/nep-ai/difqo/internal/execution"
+	"github.com/nep-ai/difqo/internal/githubconnection"
 	"github.com/nep-ai/difqo/internal/slackintake"
 
 	"github.com/nep-ai/difqo/internal/store"
@@ -26,14 +28,29 @@ import (
 
 var artifactSuffix = regexp.MustCompile(`^[0-9]+$`)
 
-func Handler(tasks store.Tasks, web fs.FS, artifacts *os.Root, runtimeChoice string, projects []store.SpecialistProject, slack *slackintake.Connections) http.Handler {
+type ManagedSetup struct {
+	CodexHelper       string
+	GitHubOrigin      string
+	GitHubConnection  string
+	GitHubPoll        func(context.Context, store.GitHubEnrollment, githubconnection.Grant) (int, error)
+	SlackRequiresCode bool
+}
+
+func Handler(tasks store.Tasks, web fs.FS, artifacts *os.Root, runtimeChoice string, projects []store.SpecialistProject, slack *slackintake.Connections, setup ManagedSetup) http.Handler {
 	router := http.NewServeMux()
 	specialists := store.Specialists{DB: tasks.DB, Projects: projects}
 	registerSpecialists(router, specialists)
 	registerRuns(router, tasks, specialists)
 	registerDecisions(router, tasks, specialists)
 	if slack != nil {
-		registerSlackConnection(router, slack)
+		registerSlackConnection(router, slack, setup.SlackRequiresCode)
+	}
+
+	if setup.CodexHelper != "" {
+		registerCodexSetup(router, setup.CodexHelper, tasks)
+	}
+	if setup.GitHubOrigin != "" {
+		registerGitHubSetup(router, tasks, setup.GitHubOrigin, setup.GitHubConnection, setup.GitHubPoll)
 	}
 
 	if web != nil {
@@ -266,7 +283,7 @@ func storeError(w http.ResponseWriter, err error) {
 	switch {
 	case errors.Is(err, sql.ErrNoRows):
 		http.Error(w, "record not found", http.StatusNotFound)
-	case errors.Is(err, store.ErrConflictingResult), errors.Is(err, store.ErrInactiveLease),
+	case errors.Is(err, store.ErrConflictingResult), errors.Is(err, store.ErrGitHubEnrollment), errors.Is(err, store.ErrInactiveLease),
 		errors.Is(err, store.ErrReviewBusy), errors.Is(err, store.ErrReviewApproved), errors.Is(err, store.ErrStaleCheck):
 		http.Error(w, err.Error(), http.StatusConflict)
 	default:

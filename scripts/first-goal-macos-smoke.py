@@ -38,6 +38,7 @@ case "$1" in
   info|build|image) exit 0 ;;
   run)
     if [ "${LOGIN_FAIL:-0}" = 1 ]; then exit 34; fi
+    printf 'Logged in using ChatGPT\n'
     ;;
   *) exit 99 ;;
 esac

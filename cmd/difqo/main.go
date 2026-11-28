@@ -21,6 +21,8 @@ import (
 	_ "github.com/jackc/pgx/v5/stdlib"
 	"github.com/nep-ai/difqo/internal/controlplane"
 	"github.com/nep-ai/difqo/internal/execution"
+	"github.com/nep-ai/difqo/internal/githubconnection"
+	"github.com/nep-ai/difqo/internal/githubintake"
 	"github.com/nep-ai/difqo/internal/slackintake"
 	"github.com/nep-ai/difqo/internal/store"
 	"github.com/nep-ai/difqo/internal/worker"
@@ -56,8 +58,10 @@ func run(args []string) error {
 	var preflight bool
 	var webPath, artifactPath, projectsPath, workerProject, bindingVersion, slackFixture, slackRelay string
 	var options execution.Options
+	var managedSetup string
 	switch args[0] {
 	case "server":
+		flags.StringVar(&managedSetup, "managed-setup", "", "private state directory for setup in the installed Mac UI")
 		flags.StringVar(&slackRelay, "slack-relay", "", "HTTPS origin of the official Slack relay")
 		flags.StringVar(&slackFixture, "slack-relay-fixture", "", "enable local Slack lifecycle and delivery with an HTTP loopback relay fixture")
 		flags.StringVar(&projectsPath, "projects", "", "path to the local project catalog JSON file")
@@ -178,6 +182,29 @@ func run(args []string) error {
 		return err
 	}
 	tasks := store.Tasks{DB: db}
+	const stagingConnections = "https://connections-staging.difqo.com"
+	var setup controlplane.ManagedSetup
+	if managedSetup != "" {
+		installed, err := os.Executable()
+		info, stateErr := os.Lstat(managedSetup)
+		if err != nil || stateErr != nil || !filepath.IsAbs(managedSetup) ||
+			!info.IsDir() || info.Mode().Perm() != 0o700 {
+			return errors.New("managed setup requires a private absolute state directory")
+		}
+		setup = controlplane.ManagedSetup{
+			CodexHelper:  filepath.Join(filepath.Dir(installed), "first-goal-macos"),
+			GitHubOrigin: stagingConnections, GitHubConnection: filepath.Join(managedSetup, "github-connection.json"),
+			GitHubPoll: func(ctx context.Context, enrollment store.GitHubEnrollment, grant githubconnection.Grant) (int, error) {
+				return githubintake.Poll(ctx, githubintake.Config{
+					Enrollment: enrollment, Repository: grant.Repository, Handle: "difqo", Token: grant.Token,
+				}, tasks)
+			},
+		}
+		if slackRelay == "" && slackFixture == "" {
+			slackRelay = stagingConnections
+			setup.SlackRequiresCode = os.Getenv("DIFQO_SLACK_ENROLLMENT_TOKEN") == ""
+		}
+	}
 	var slack *slackintake.Connections
 	switch {
 	case slackRelay != "":
@@ -188,7 +215,7 @@ func run(args []string) error {
 	if err != nil {
 		return err
 	}
-	handler := http.NewCrossOriginProtection().Handler(controlplane.Handler(tasks, web, artifacts, options.Runtime, projects, slack))
+	handler := http.NewCrossOriginProtection().Handler(controlplane.Handler(tasks, web, artifacts, options.Runtime, projects, slack, setup))
 	server := &http.Server{
 		Addr: address,
 		Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

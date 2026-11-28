@@ -25,14 +25,25 @@ testing a rerun.
 
 ## Verify the first patch
 
-On a clean installed Apple silicon Mac, open **Worker setup** in Chief of
-Staff. Start Docker Desktop and run the displayed setup command in Terminal.
-It builds the bundled Codex image and prompts for device sign-in with a
-dedicated credential directory. Load and queue the sample goal, then run the
-command displayed on its queued card. It creates a disposable Git repository
-and claims only the selected goal. The sample check requires
-`greeting.txt` to contain `after`. In **Review patch**, confirm the expected
-diff, then use **Rerun check** and approve the patch after the check passes.
+On a clean Apple silicon Mac with Difqo installed, start Docker Desktop.
+Open **Connections** in Chief of Staff and choose **Sign in with ChatGPT**.
+Follow the OpenAI sign-in link and enter the one-time code shown in Difqo.
+Wait for the worker to report ready, then load and queue the sample goal.
+Choose **Run sample goal** on its queued card. The worker creates a disposable
+Git repository, claims the selected goal, and checks that `greeting.txt`
+contains `after`. In **Review patch**, inspect the diff, select **Rerun check**,
+and approve the patch once it passes.
+
+### Connect the staging integrations
+
+- In **Connections → Slack**, enter the Slack pilot enrollment code and
+  authorize your Slack identity. Install the app or request workspace approval,
+  check authorization, and confirm the workspace and operator to link the DM.
+  The current pilot imports a linked DM beginning with `goal `.
+- In **Connections → GitHub**, open the official app, install it on the
+  approved test repository, and enter the GitHub pilot connection code.
+  Post a test comment beginning with `@difqo` and choose **Sync GitHub mentions**.
+  A second sync should import zero tasks. This pilot grant is read-only.
 
 For a manual run with a saved decision or a supported alternate runtime, use
 the steps below.
