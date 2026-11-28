@@ -3,7 +3,8 @@ import React, { useEffect, useState } from 'react'
 function useConnection(request, path, open, interval = 0) {
   const [view, setView] = useState(null)
   const [busy, setBusy] = useState(false)
-  const [error, setError] = useState('')
+  const [readError, setReadError] = useState('')
+  const [actionError, setActionError] = useState('')
   const [retry, setRetry] = useState(0)
 
   useEffect(() => {
@@ -14,11 +15,18 @@ function useConnection(request, path, open, interval = 0) {
       try {
         const response = await request(path, { signal: controller.signal })
         const data = await response.json()
-        if (!controller.signal.aborted) setView(current => ({ ...data, imported: current?.imported }))
+        if (!controller.signal.aborted) {
+          setView(current => ({ ...data, imported: current?.imported }))
+          setReadError('')
+        }
       } catch (err) {
         if (!controller.signal.aborted) {
-          if (err.status === 404) setView({ unavailable: true })
-          else setError('Couldn’t read the connection status. Try again.')
+          if (err.status === 404) {
+            setView({ unavailable: true })
+            setReadError('')
+          } else {
+            setReadError('Couldn’t read the connection status. Try again.')
+          }
         }
       } finally {
         if (interval && !controller.signal.aborted) timer = setTimeout(load, interval)
@@ -34,7 +42,7 @@ function useConnection(request, path, open, interval = 0) {
   async function act(action, extra = {}, timeoutMs = 12000, target = path) {
     if (busy) return null
     setBusy(true)
-    setError('')
+    setActionError('')
     try {
       const response = await request(target, {
         method: 'POST',
@@ -46,7 +54,7 @@ function useConnection(request, path, open, interval = 0) {
       setView(data)
       return data
     } catch (err) {
-      setError(err?.message && err?.status !== 502 ? err.message
+      setActionError(err?.message && err?.status !== 502 ? err.message
         : action === 'begin' ? 'Couldn’t start Slack setup. Check the pilot code and try again.'
           : 'Couldn’t complete this action. Check the connection and try again.')
       return null
@@ -55,7 +63,10 @@ function useConnection(request, path, open, interval = 0) {
     }
   }
 
-  return { view, busy, error, act, reload: () => { setError(''); setRetry(value => value + 1) } }
+  return {
+    view, busy, error: readError || actionError, readError, actionError, act,
+    reload: () => { setReadError(''); setRetry(value => value + 1) },
+  }
 }
 
 function ConnectionCard({ title, children }) {
@@ -66,9 +77,12 @@ function ConnectionCard({ title, children }) {
 }
 
 function ConnectionError({ connection }) {
-  return connection.error && <p className="submit-error" role="alert">
-    {connection.error}{!connection.view && <> <button onClick={connection.reload}>Retry</button></>}
-  </p>
+  return <>
+    {connection.readError && <p className="submit-error" role="alert">
+      {connection.readError} <button onClick={connection.reload} disabled={connection.busy}>Retry</button>
+    </p>}
+    {connection.actionError && <p className="submit-error" role="alert">{connection.actionError}</p>}
+  </>
 }
 
 function ChatGPT({ request, open, sandboxGuide, onSample, sampleDisabled }) {
@@ -118,6 +132,7 @@ function Slack({ request, open }) {
   const connection = useConnection(request, '/slack/connection', open, 2000)
   const { view, busy, act } = connection
   const [code, setCode] = useState('')
+  useEffect(() => { if (!open) setCode('') }, [open])
   const [link, setLink] = useState(null)
   const [enrolledPairing, setEnrolledPairing] = useState('')
   const state = view?.state
@@ -174,6 +189,7 @@ function GitHub({ request, open }) {
   const connection = useConnection(request, '/setup/github', open)
   const { view, busy, act } = connection
   const [code, setCode] = useState('')
+  useEffect(() => { if (!open) setCode('') }, [open])
   const [reconnecting, setReconnecting] = useState(false)
   return <ConnectionCard title="GitHub">
     <p>Import mentions from the repository approved for the official Difqo GitHub App pilot.</p>
@@ -229,10 +245,10 @@ export function Connections({ dialog, open, onClose, request, sandboxGuide, onSa
       <h2 id="connections-title">Connections</h2>
       <form method="dialog"><button className="subtle">Close</button></form>
     </div>
-    {open && <div className="connection-cards">
+    <div className="connection-cards">
       <ChatGPT request={request} open={open} sandboxGuide={sandboxGuide} onSample={onSample} sampleDisabled={sampleDisabled} />
       <Slack request={request} open={open} />
       <GitHub request={request} open={open} />
-    </div>}
+    </div>
   </dialog>
 }

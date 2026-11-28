@@ -202,8 +202,8 @@ func run(args []string) error {
 		}
 		if slackRelay == "" && slackFixture == "" {
 			slackRelay = stagingConnections
-			setup.SlackRequiresCode = os.Getenv("DIFQO_SLACK_ENROLLMENT_TOKEN") == ""
 		}
+		setup.SlackRequiresCode = slackRelay == stagingConnections && os.Getenv("DIFQO_SLACK_ENROLLMENT_TOKEN") == ""
 	}
 	var slack *slackintake.Connections
 	switch {
