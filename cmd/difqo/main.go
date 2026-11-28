@@ -213,6 +213,7 @@ func run(args []string) error {
 		}
 		token := os.Getenv("DIFQO_SLACK_ENROLLMENT_TOKEN")
 		setup.SlackRequiresCode = managedSetup != "" && origin == stagingConnections && token == ""
+		setup.SlackPlainText = origin == stagingConnections || token != ""
 		slack, err = slackintake.NewPilotConnections(tasks, origin, token)
 	case slackFixture != "":
 		slack, err = slackintake.NewFixtureConnections(tasks, slackFixture)

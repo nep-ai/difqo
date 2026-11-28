@@ -119,7 +119,7 @@ state on the relay.
    the install. After OAuth completes, verify the displayed workspace,
    operator, and DM. Confirm locally before sending the acceptance goal.
 2. From the linked operator's private app DM, send
-   `goal Verify the nepai Slack pilot`. Verify exactly one local task with
+   `Verify the nepai Slack pilot` as a plain-text message. Verify exactly one local task with
    the current saved decision and confirm the relay clears the acknowledged
    goal body. Retry the same event in the approved replay harness and verify
    the original task remains the only task for that event.

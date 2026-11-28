@@ -56,7 +56,7 @@ func (r *relay) signedEvents(signingSecret string, now func() time.Time) http.Ha
 			return
 		}
 
-		binding, goal := callback.Goal()
+		binding, goal := callback.Goal(r.pilot == nil)
 		if goal != "" {
 			ctx, cancel := context.WithTimeout(req.Context(), webhookDBTimeout)
 			defer cancel()

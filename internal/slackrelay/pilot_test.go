@@ -81,15 +81,24 @@ func TestHostedSlackPilot(t *testing.T) {
 		t.Fatal("expected only the approved operator to bind")
 	}
 	event := f.fixtureEvent()
+	event.Event.Text = "Review the fixture change."
 	f.webhook(event, http.StatusOK)
 	if f.queueCount(f.id) != 0 {
 		t.Fatal("unclaimed binding queued an event")
 	}
 	f.claim(*ready.Binding, f.proof, http.StatusNoContent)
+	unlinked := event
+	unlinked.Event.User = testAdmin
+	f.webhook(unlinked, http.StatusOK)
+	if f.queueCount(f.id) != 0 {
+		t.Fatal("an unlinked sender queued a plain-text goal")
+	}
+	f.webhook(event, http.StatusOK)
 	f.webhook(event, http.StatusOK)
 	var batch slackintake.DeliveryBatch
 	f.request("GET", path+"/events", f.proof, nil, http.StatusOK, &batch)
-	if batch.Binding != *ready.Binding || len(batch.Events) != 1 || batch.Events[0].EventID != event.EventID {
+	if batch.Binding != *ready.Binding || len(batch.Events) != 1 || batch.Events[0].EventID != event.EventID ||
+		batch.Events[0].Goal != event.Event.Text {
 		t.Fatalf("unexpected pilot delivery: %+v", batch)
 	}
 	f.request("PUT", path+"/events/"+event.EventID, f.proof, nil, http.StatusNoContent, nil)

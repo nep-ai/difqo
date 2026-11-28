@@ -27,7 +27,7 @@ type Callback struct {
 
 // Goal normalizes a human DM after its transport has authenticated the payload.
 // An empty goal means the event is outside the supported intake scope.
-func (callback Callback) Goal() (store.SlackBinding, string) {
+func (callback Callback) Goal(requirePrefix bool) (store.SlackBinding, string) {
 	if callback.Type != "event_callback" || callback.ExternalShare {
 		return store.SlackBinding{}, ""
 	}
@@ -43,7 +43,7 @@ func (callback Callback) Goal() (store.SlackBinding, string) {
 		EventID: callback.EventID, Type: message.Type, ChannelType: message.ChannelType,
 		Bot: &bot, Subtype: message.Subtype, Text: message.Text,
 	}
-	value, err := incoming.goal()
+	value, err := incoming.goal(requirePrefix)
 	if err != nil {
 		return store.SlackBinding{}, ""
 	}

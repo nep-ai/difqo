@@ -39,7 +39,7 @@ and approve the patch once it passes.
 - In **Connections → Slack**, enter the Slack pilot enrollment code and
   authorize your Slack identity. Install the app or request workspace approval,
   check authorization, and confirm the workspace and operator to link the DM.
-  The current pilot imports a linked DM beginning with `goal `.
+  Send a coding goal as plain text in the linked pilot DM and verify it appears in Chief of Staff.
 - In **Connections → GitHub**, open the official app, install it on the
   approved test repository, and enter the GitHub pilot connection code.
   Post a test comment beginning with `@difqo` and choose **Sync GitHub mentions**.
