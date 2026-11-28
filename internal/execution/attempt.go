@@ -96,7 +96,7 @@ func (o Options) Run(ctx context.Context, repo string, task store.Task) store.Re
 			task.Decision.ID, task.Decision.Body, goal)
 	}
 	c := container{name: "difqo-" + filepath.Base(dir), workspace: workspace, runtime: o.runtime}
-	if diagnostic, err := c.codex(ctx, o.AuthHome, goal); err != nil {
+	if diagnostic, err := c.codex(ctx, o.AuthHome, goal, task.Attachments...); err != nil {
 		if errors.Is(err, ErrAuthentication) {
 			return store.Result{ExitCode: 125, Output: "Codex sign-in required", Blocked: true}
 		}

@@ -1,3 +1,4 @@
+from base64 import b64encode
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import closing
 from datetime import datetime
@@ -408,7 +409,13 @@ with TemporaryDirectory(prefix='difqo-smoke-') as scratch:
                 return run(runtime, 'ps', '-a', '--filter', 'name=difqo-', '-q').splitlines()
 
             def run_codex(image, command=check, verify_preflight=False):
-                status, submitted = api('/tasks', 'POST', {'goal': 'Replace the fixture greeting'})
+                status, submitted = api('/tasks', 'POST', {
+                    'goal': 'Replace the fixture greeting',
+                    'attachments': [
+                        {'name': 'note.txt', 'data': b64encode(b'Synthetic fixture context.').decode()},
+                        {'name': 'screenshot.png', 'data': 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aWQ0AAAAASUVORK5CYII='},
+                    ],
+                })
                 assert status == 201
                 path = f"/tasks/{submitted['id']}"
                 if verify_preflight:
@@ -590,6 +597,27 @@ with TemporaryDirectory(prefix='difqo-smoke-') as scratch:
         status, claimed = api('/tasks/claim', 'POST', {})
         assert status == 200 and claimed['id'] == slack_task['id']
         print('Slack intake smoke passed: scope, task visibility, concurrent deduplication, and replay after restart')
+
+        payload = {'goal': 'Read the diagnostic attachment', 'attachments': [
+            {'name': 'diagnostic.log', 'data': b64encode(b'Synthetic diagnostic').decode()},
+        ]}
+        assert api('/tasks', 'POST', payload | {'attachments': [
+            {'name': '../forbidden.txt', 'data': payload['attachments'][0]['data']},
+        ]})[0] == 400
+        status, message = api('/tasks', 'POST', payload)
+        assert status == 201
+        assert message['attachments'] == [{'name': 'diagnostic.log', 'mime': 'text/plain'}]
+        route = f"/tasks/{message['id']}"
+        server.terminate()
+        server.wait(timeout=5)
+        server = start()
+        assert api(route) == (200, message)
+        assert api('/tasks/claim', 'POST', {'task_id': message['id']})[0] == 204
+        status, lease = api('/tasks/claim', 'POST', {'task_id': message['id'], 'accept_attachments': True})
+        assert status == 200 and lease['id'] == message['id']
+        assert lease['attachments'] == [message['attachments'][0] | {'data': payload['attachments'][0]['data']}]
+        assert api(route)[1]['attachments'] == message['attachments']
+        print('Attachment smoke passed: validation, metadata-only history, restart persistence, and Codex-only claim')
     finally:
         server.terminate()
         server.wait(timeout=5)

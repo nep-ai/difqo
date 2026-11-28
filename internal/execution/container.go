@@ -10,6 +10,8 @@ import (
 	"os/exec"
 	"strings"
 	"time"
+
+	"github.com/nep-ai/difqo/internal/store"
 )
 
 type container struct {
@@ -55,7 +57,7 @@ func (c container) remove() {
 	_ = exec.CommandContext(ctx, c.runtime.executable, "rm", "-f", c.name).Run()
 }
 
-func (c container) codex(ctx context.Context, authHome, goal string) (string, error) {
+func (c container) codex(ctx context.Context, authHome, goal string, attachments ...store.Attachment) (string, error) {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	cmd := c.command(ctx, authHome,
@@ -85,7 +87,7 @@ func (c container) codex(ctx context.Context, authHome, goal string) (string, er
 		_ = stdout.Close()
 	})
 	defer stop()
-	err = runCodex(stdin, stdout, goal)
+	err = runCodex(stdin, stdout, goal, attachments)
 	cancel()
 	waitErr := cmd.Wait()
 	if err == nil || errors.Is(err, ErrAuthentication) {

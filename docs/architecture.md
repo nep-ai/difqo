@@ -30,7 +30,7 @@ flowchart LR
     Server -->|"Persist Slack connection generation and commit delivered goals"| Postgres
     SlackImport -->|"Check the linked app, workspace, operator, and DM"| SlackBinding
     SlackBinding -->|"Save event identity and local task atomically"| Postgres
-    Browser -->|"Save decisions, submit goals, and review patches over loopback HTTP"| Server["difqo server"]
+    Browser -->|"Save decisions, submit text and attachments, and review patches over loopback HTTP"| Server["difqo server"]
     Browser -->|"Sign in with ChatGPT, link Slack, or connect and sync GitHub"| Server
     Server -->|"Run the installed Mac setup and sample commands"| WorkerHelper["Packaged Mac worker helper"]
     WorkerHelper -->|"Build the image and use the Codex device sign-in"| Runtime
@@ -48,7 +48,7 @@ flowchart LR
     Server -->|"Persist decisions, attempts, review checks, and approvals"| Postgres[("PostgreSQL on host")]
     Worker -->|"Read HEAD or make a shallow clone"| Repo["Operator-selected Git checkout"]
     Worker -->|"In Codex mode, validate runtime, image, and sandbox before claim"| Runtime["Docker, Podman, or compatible container CLI"]
-    Runtime -->|"Run one App Server turn over stdio"| Codex["Disposable execution workspace"]
+    Runtime -->|"Run a text and image App Server turn over stdio"| Codex["Disposable execution workspace"]
     Worker -->|"Capture base, candidate commit, diff, and check log"| Artifacts["Host artifact directory"]
     Server -->|"Read and verify attempt-bound evidence"| Artifacts
     Server -->|"Select a runtime with the saved local image"| Runtime

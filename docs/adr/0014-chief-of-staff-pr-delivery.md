@@ -42,6 +42,15 @@ message and file identity on replay, show remote-provider files as links,
 and send Slack credentials only to approved Slack file hosts.
 [Slack file API][slack-files]
 
+The local web composer initially accepts PNG, JPEG, and short UTF-8 text
+attachments with a coding request. The task and attachments are committed
+together in local PostgreSQL. History responses contain file metadata only.
+Workers declare support before claiming a task with file data, and the Codex
+worker forwards the supported files in the same App Server turn as the task.
+The composer asks for a request before sending an attachment-only draft.
+Persisting attachment-only conversation turns and routing them from Slack
+remain part of the shared conversation implementation.
+
 ### Discoverable Slack actions
 
 Plain-language conversation is the entry point. Register zero slash

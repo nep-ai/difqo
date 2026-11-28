@@ -22,7 +22,8 @@ func Run(ctx context.Context, address string, repo string, executionOptions *exe
 	var claim any = struct {
 		GitHubRepositoryID int64 `json:"github_repository_id,omitempty"`
 		TaskID             int64 `json:"task_id,omitempty"`
-	}{githubRepositoryID, taskID}
+		AcceptAttachments  bool  `json:"accept_attachments,omitempty"`
+	}{githubRepositoryID, taskID, executionOptions != nil}
 	if project.ID != "" {
 		endpoint = "/specialist-runs/claim"
 		claim = struct {

@@ -365,8 +365,19 @@ function ProjectFile({ goal, openSetup }) {
   </section>
 }
 
+function encodeAttachment(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onload = () => resolve({ name: file.name, data: String(reader.result).split(',', 2)[1] })
+    reader.onerror = () => reject(new Error('Couldn’t read ' + file.name + '. Attach it again.'))
+    reader.readAsDataURL(file)
+  })
+}
+
 function Chat({ goals, connection, submit, addTask, setupDialog, setupOpen, openSetup, closeSetup }) {
   const [draft, setDraft] = useState('')
+  const [files, setFiles] = useState([])
+  const filePicker = useRef(null)
   const [showSpecialists, setShowSpecialists] = useState(false)
   const specialistTrigger = useRef(null)
   const [sending, setSending] = useState(false)
@@ -387,20 +398,37 @@ function Chat({ goals, connection, submit, addTask, setupDialog, setupOpen, open
     }
   }, [latest])
 
+  function attach(selected) {
+    if (sending || selected.length === 0) return
+    const combined = [...files, ...selected]
+    if (combined.length > 4 || combined.some(file => !file.size || file.size > 2 * 1024 ** 2) ||
+      combined.reduce((total, file) => total + file.size, 0) > 4 * 1024 ** 2) {
+      setError('Attach up to four non-empty files, 2 MB each and 4 MB total.')
+      return
+    }
+    setError('')
+    setFiles(combined)
+  }
+
   async function send(event) {
     event.preventDefault()
-    if (!draft.trim() || sending || connection !== 'ready') return
+    if (sending || connection !== 'ready') return
+    if (!draft.trim()) {
+      if (files.length) setError('What would you like Chief of Staff to do with these files?')
+      return
+    }
     const goal = draft.trim()
     setSending(true)
     setError('')
     try {
       submitted.current = true
-      await submit(goal)
+      await submit(goal, await Promise.all(files.map(encodeAttachment)))
       setDraft('')
+      setFiles([])
     } catch (err) {
       submitted.current = false
       setError(err instanceof RequestError && err.status === 400
-        ? 'Enter a goal of up to 4,096 characters.'
+        ? err.message
         : 'Couldn’t confirm submission. Check the conversation before retrying. Your draft is still here.')
     } finally {
       setSending(false)
@@ -409,9 +437,21 @@ function Chat({ goals, connection, submit, addTask, setupDialog, setupOpen, open
 
   return <main className="chat" aria-labelledby="conversation-title">
     <h1 id="conversation-title" className="sr-only">Chief of Staff conversation</h1>
+    <details className="chat-tools">
+      <summary>Project tools</summary>
+      <div className="actions">
+        <ProjectDecision dialog={decisionDialog} />
+        <button className="subtle" type="button" ref={specialistTrigger} aria-expanded={showSpecialists}
+          onClick={() => setShowSpecialists(open => !open)}>Specialists</button>
+      </div>
+    </details>
     {goals.length ? <section className="conversation" aria-label="Conversation">
       {goals.map(goal => <React.Fragment key={goal.id}>
-        <article className="turn user" aria-label="You"><div className="turn-content"><p>{goal.goal}</p></div></article>
+        <article className="turn user" aria-label="You"><div className="turn-content"><p>{goal.goal}</p>
+          {goal.attachments?.length > 0 && <ul className="sent-files" aria-label="Attachments">
+            {goal.attachments.map((file, index) => <li key={index}>{file.name}</li>)}
+          </ul>}
+        </div></article>
         <article className="turn chief" aria-label="Chief of Staff"><Mark /><div className="turn-content">
           <strong className="speaker">Chief of Staff</strong><ProjectFile goal={goal} openSetup={openSetup} />
         </div></article>
@@ -431,26 +471,41 @@ function Chat({ goals, connection, submit, addTask, setupDialog, setupOpen, open
       <form onSubmit={send}>
         {error && <p className="submit-error" role="alert">{error}</p>}
         <div className="compose-box">
-          <label htmlFor="message" className="sr-only">Coding goal</label>
+          {files.length > 0 && <ul className="compose-files" aria-label="Attachments">
+            {files.map((file, index) => <li key={index}>{file.name}
+              <button type="button" className="subtle" aria-label={'Remove ' + file.name} disabled={sending}
+                onClick={() => { setFiles(files.filter((_, position) => position !== index)); setError('') }}>Remove</button>
+            </li>)}
+          </ul>}
+          <label htmlFor="message" className="sr-only">Message Chief of Staff</label>
           <textarea id="message" ref={composer} rows={2} maxLength={4096} value={draft}
-            onChange={event => setDraft(event.target.value)} readOnly={sending} placeholder="Describe a repository change"
+            onChange={event => setDraft(event.target.value)} readOnly={sending} placeholder="Message Chief of Staff"
+            onPaste={event => {
+              const pasted = Array.from(event.clipboardData.files)
+              if (pasted.length) {
+                event.preventDefault()
+                attach(pasted)
+              }
+            }}
             onKeyDown={event => {
               if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) {
                 event.preventDefault()
                 event.currentTarget.form.requestSubmit()
               }
             }} />
-          <button className="primary" disabled={!draft.trim() || sending || connection !== 'ready'}>{sending ? 'Queuing…' : 'Queue goal'}</button>
+          <div className="compose-actions">
+            <input ref={filePicker} type="file" multiple hidden onChange={event => {
+              attach(Array.from(event.target.files))
+              event.target.value = ''
+            }} />
+            <button type="button" className="subtle" disabled={sending} onClick={() => filePicker.current.click()}>Attach</button>
+            <button className="primary" disabled={(!draft.trim() && files.length === 0) || sending || connection !== 'ready'}>{sending ? 'Sending…' : 'Send'}</button>
+          </div>
         </div>
       </form>
-      <div className="composer-meta"><div className="specialist-actions">
-        <ProjectDecision dialog={decisionDialog} />
-        <button className="subtle" type="button" ref={specialistTrigger} aria-expanded={showSpecialists}
-          onClick={() => setShowSpecialists(open => !open)}>Specialists</button>
-      </div><span>Shift + Enter for a new line</span></div>
     </div>
     <Connections dialog={setupDialog} open={setupOpen} onClose={closeSetup} request={request}
-      sandboxGuide={sandboxGuide} sampleDisabled={sending || !!draft.trim()} onSample={() => {
+      sandboxGuide={sandboxGuide} sampleDisabled={sending || !!draft.trim() || files.length > 0} onSample={() => {
         setDraft(sampleGoal)
         setupDialog.current.close()
         composer.current?.focus()
@@ -495,11 +550,11 @@ function App() {
     }
   }, [])
 
-  async function submit(goal) {
+  async function submit(goal, attachments) {
     const response = await request('/tasks', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ goal }),
+      body: JSON.stringify({ goal, attachments }),
     })
     addTask(await response.json())
   }

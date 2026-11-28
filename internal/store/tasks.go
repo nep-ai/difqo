@@ -14,12 +14,19 @@ const (
 )
 
 type Task struct {
-	ID       int64          `json:"id"`
-	Goal     string         `json:"goal"`
-	Status   string         `json:"status"`
-	Decision *Decision      `json:"decision,omitempty"`
-	Run      *SpecialistRun `json:"specialist_run,omitempty"`
-	Attempt  *Attempt       `json:"attempt,omitempty"`
+	ID          int64          `json:"id"`
+	Goal        string         `json:"goal"`
+	Status      string         `json:"status"`
+	Decision    *Decision      `json:"decision,omitempty"`
+	Run         *SpecialistRun `json:"specialist_run,omitempty"`
+	Attempt     *Attempt       `json:"attempt,omitempty"`
+	Attachments []Attachment   `json:"attachments,omitempty"`
+}
+
+type Attachment struct {
+	Name string `json:"name"`
+	MIME string `json:"mime"`
+	Data []byte `json:"data,omitempty"`
 }
 
 type Attempt struct {
@@ -44,22 +51,47 @@ type Tasks struct {
 }
 
 func (s Tasks) Create(ctx context.Context, goal string) (Task, error) {
-	return createTask(ctx, s.DB, goal)
+	return s.CreateWithAttachments(ctx, goal, nil)
 }
 
 func createTask(ctx context.Context, db interface {
 	QueryRowContext(context.Context, string, ...any) *sql.Row
 }, goal string) (Task, error) {
+	return insertTask(ctx, db, goal, nil)
+}
+
+func (s Tasks) CreateWithAttachments(ctx context.Context, goal string, attachments []Attachment) (Task, error) {
+	return insertTask(ctx, s.DB, goal, attachments)
+}
+
+func insertTask(ctx context.Context, db interface {
+	QueryRowContext(context.Context, string, ...any) *sql.Row
+}, goal string, attachments []Attachment) (Task, error) {
 	task := Task{Goal: goal, Status: "queued"}
+	var raw, metadata []byte
+	if len(attachments) > 0 {
+		var err error
+		raw, err = json.Marshal(attachments)
+		if err != nil {
+			return Task{}, err
+		}
+		for _, file := range attachments {
+			task.Attachments = append(task.Attachments, Attachment{Name: file.Name, MIME: file.MIME})
+		}
+		metadata, err = json.Marshal(task.Attachments)
+		if err != nil {
+			return Task{}, err
+		}
+	}
 	var decisionID *int64
 	var decisionBody *string
 	err := db.QueryRowContext(ctx, `
 		WITH saved AS (
-			INSERT INTO tasks (goal, decision_id)
-			VALUES ($1, (SELECT id FROM project_decisions WHERE project_id = '' ORDER BY id DESC LIMIT 1))
+			INSERT INTO tasks (goal, decision_id, attachment_metadata, attachments)
+			VALUES ($1, (SELECT id FROM project_decisions WHERE project_id = '' ORDER BY id DESC LIMIT 1), $2::jsonb, $3::jsonb)
 			RETURNING id, decision_id
 		)
-		SELECT saved.id, d.id, d.body FROM saved LEFT JOIN project_decisions d ON d.id = saved.decision_id`, goal).
+		SELECT saved.id, d.id, d.body FROM saved LEFT JOIN project_decisions d ON d.id = saved.decision_id`, goal, metadata, raw).
 		Scan(&task.ID, &decisionID, &decisionBody)
 	if err == nil && decisionID != nil {
 		task.Decision = &Decision{ID: *decisionID, Body: *decisionBody}
@@ -76,7 +108,8 @@ const taskQuery = `
 				WHEN a.attempt_number = $1 THEN 'exhausted'
 				ELSE 'queued'
 			END,
-			a.id, a.attempt_number, a.lease_expires_at, a.completed_at, a.exit_code, a.output, a.blocked, a.artifacts, a.snapshot, d.id, d.body, ` + runMetadata + `
+			a.id, a.attempt_number, a.lease_expires_at, a.completed_at, a.exit_code, a.output, a.blocked, a.artifacts, a.snapshot, d.id, d.body, ` + runMetadata + `,
+			t.attachment_metadata
 		FROM tasks t LEFT JOIN project_decisions d ON d.id = t.decision_id LEFT JOIN LATERAL (
 			SELECT id, attempt_number, lease_expires_at, completed_at, exit_code, output, blocked, artifacts, snapshot
 			FROM attempts WHERE task_id = t.id ORDER BY attempt_number DESC LIMIT 1
@@ -115,10 +148,10 @@ func scanTask(row interface{ Scan(...any) error }) (Task, error) {
 	var artifacts *string
 	var decisionID *int64
 	var decisionBody *string
-	var snapshot, run []byte
+	var snapshot, run, attachments []byte
 	err := row.Scan(
 		&task.ID, &task.Goal, &task.Status, &attemptID, &number, &leaseExpiresAt,
-		&attempt.CompletedAt, &exitCode, &output, &blocked, &artifacts, &snapshot, &decisionID, &decisionBody, &run)
+		&attempt.CompletedAt, &exitCode, &output, &blocked, &artifacts, &snapshot, &decisionID, &decisionBody, &run, &attachments)
 	if err == nil && decisionID != nil {
 		task.Decision = &Decision{ID: *decisionID, Body: *decisionBody}
 	}
@@ -137,31 +170,38 @@ func scanTask(row interface{ Scan(...any) error }) (Task, error) {
 	if err == nil && run != nil {
 		err = json.Unmarshal(run, &task.Run)
 	}
+	if err == nil && attachments != nil {
+		err = json.Unmarshal(attachments, &task.Attachments)
+	}
 	return task, err
 }
 
 func (s Tasks) Claim(ctx context.Context, githubRepositoryID int64) (Task, error) {
-	return s.claimFor(ctx, githubRepositoryID, SpecialistProject{}, 0)
+	return s.claimFor(ctx, githubRepositoryID, SpecialistProject{}, 0, false)
 }
 
 func (s Tasks) ClaimLocalTask(ctx context.Context, id int64) (Task, error) {
-	return s.claimFor(ctx, 0, SpecialistProject{}, id)
+	return s.claimFor(ctx, 0, SpecialistProject{}, id, false)
 }
 
 func (s Tasks) ClaimProject(ctx context.Context, project SpecialistProject) (Task, error) {
-	return s.claimFor(ctx, 0, project, 0)
+	return s.claimFor(ctx, 0, project, 0, false)
 }
 
-func (s Tasks) claimFor(ctx context.Context, githubRepositoryID int64, project SpecialistProject, id int64) (Task, error) {
+func (s Tasks) ClaimCodex(ctx context.Context, githubRepositoryID, id int64) (Task, error) {
+	return s.claimFor(ctx, githubRepositoryID, SpecialistProject{}, id, true)
+}
+
+func (s Tasks) claimFor(ctx context.Context, githubRepositoryID int64, project SpecialistProject, id int64, attachmentSupport bool) (Task, error) {
 	for {
-		task, retry, err := s.claim(ctx, githubRepositoryID, project, id)
+		task, retry, err := s.claim(ctx, githubRepositoryID, project, id, attachmentSupport)
 		if !retry {
 			return task, err
 		}
 	}
 }
 
-func (s Tasks) claim(ctx context.Context, githubRepositoryID int64, project SpecialistProject, id int64) (Task, bool, error) {
+func (s Tasks) claim(ctx context.Context, githubRepositoryID int64, project SpecialistProject, id int64, attachmentSupport bool) (Task, bool, error) {
 	tx, err := s.DB.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelReadCommitted})
 	if err != nil {
 		return Task{}, false, err
@@ -180,6 +220,7 @@ func (s Tasks) claim(ctx context.Context, githubRepositoryID int64, project Spec
 			FROM attempts WHERE task_id = t.id ORDER BY attempt_number DESC LIMIT 1
 		) a ON true
 		WHERE ($7::bigint = 0 OR t.id = $7)
+		AND ($8::boolean OR t.attachment_metadata IS NULL)
 		AND ((sr.task_id IS NULL AND $2 = '' AND COALESCE(g.repository_id, 0) = $6) OR (
 			g.task_id IS NULL AND sr.project->>'id' = $2 AND sr.project->>'binding' = $3
 			AND approved.configuration->>'profile' = $4 AND approved.configuration->>'access' = $5
@@ -196,7 +237,7 @@ func (s Tasks) claim(ctx context.Context, githubRepositoryID int64, project Spec
 			AND a.attempt_number < $1
 		))
 		ORDER BY t.id LIMIT 1 FOR UPDATE OF t SKIP LOCKED`,
-		maxAttempts, project.ID, project.Binding, specialistProfile, specialistAccess, githubRepositoryID, id).Scan(&taskID)
+		maxAttempts, project.ID, project.Binding, specialistProfile, specialistAccess, githubRepositoryID, id, attachmentSupport).Scan(&taskID)
 	if err != nil {
 		return Task{}, false, err
 	}
@@ -204,6 +245,15 @@ func (s Tasks) claim(ctx context.Context, githubRepositoryID int64, project Spec
 	task, err := scanTask(tx.QueryRowContext(ctx, taskQuery+` WHERE t.id = $2`, maxAttempts, taskID))
 	if err != nil {
 		return Task{}, false, err
+	}
+	if len(task.Attachments) > 0 {
+		var raw []byte
+		if err := tx.QueryRowContext(ctx, `SELECT attachments FROM tasks WHERE id = $1`, taskID).Scan(&raw); err != nil {
+			return Task{}, false, err
+		}
+		if err := json.Unmarshal(raw, &task.Attachments); err != nil {
+			return Task{}, false, err
+		}
 	}
 	if task.Run != nil {
 		current, err := lockSpecialist(ctx, tx, task.Run.SpecialistID)
