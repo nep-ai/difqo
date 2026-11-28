@@ -68,6 +68,14 @@ type Specialist struct {
 type Specialists struct {
 	DB       *sql.DB
 	Projects []SpecialistProject
+	Catalog  func() []SpecialistProject
+}
+
+func (s Specialists) ProjectCatalog() []SpecialistProject {
+	if s.Catalog != nil {
+		return s.Catalog()
+	}
+	return s.Projects
 }
 
 type SpecialistState struct {
@@ -107,7 +115,7 @@ func scanProposal(row interface{ Scan(...any) error }) (SpecialistProposal, erro
 
 func (s Specialists) State(ctx context.Context) (SpecialistState, error) {
 	state := SpecialistState{
-		Projects: append([]SpecialistProject{}, s.Projects...), Access: specialistAccess,
+		Projects: append([]SpecialistProject{}, s.ProjectCatalog()...), Access: specialistAccess,
 		Specialists: []Specialist{}, Proposals: []SpecialistProposal{},
 	}
 	tx, err := s.DB.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelRepeatableRead, ReadOnly: true})
@@ -167,7 +175,7 @@ func (s Specialists) Eligible(ctx context.Context, specialistID int64, projectID
 }
 
 func (s Specialists) hasBinding(project SpecialistProject) bool {
-	for _, registered := range s.Projects {
+	for _, registered := range s.ProjectCatalog() {
 		if registered.ID == project.ID && registered.Binding == project.Binding {
 			return true
 		}
@@ -205,7 +213,7 @@ func (s Specialists) Propose(ctx context.Context, p SpecialistProposal, projectI
 	if p.Action != "disable" {
 		p.Config.Profile = specialistProfile
 		p.Config.Access = specialistAccess
-		for _, registered := range s.Projects {
+		for _, registered := range s.ProjectCatalog() {
 			for _, id := range projectIDs {
 				if id == registered.ID {
 					p.Config.Projects = append(p.Config.Projects, registered)

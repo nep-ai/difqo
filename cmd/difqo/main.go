@@ -180,34 +180,43 @@ func run(args []string) error {
 		}
 		defer artifacts.Close()
 	}
-	projects, err := loadProjects(projectsPath)
+	if managedSetup != "" {
+		info, err := os.Lstat(managedSetup)
+		if err != nil || !filepath.IsAbs(managedSetup) || !info.IsDir() || info.Mode().Perm() != 0o700 {
+			return errors.New("managed setup requires a private absolute state directory")
+		}
+	}
+	catalog, err := openProjectCatalog(managedSetup, projectsPath)
 	if err != nil {
 		return err
 	}
+	projects := catalog.list()
 	tasks := store.Tasks{DB: db}
 	const stagingConnections = "https://connections-staging.difqo.com"
 	var setup controlplane.ManagedSetup
 	var chiefOptions execution.Options
 	if managedSetup != "" {
 		installed, err := os.Executable()
-		info, stateErr := os.Lstat(managedSetup)
-		if err != nil || stateErr != nil || !filepath.IsAbs(managedSetup) ||
-			!info.IsDir() || info.Mode().Perm() != 0o700 {
-			return errors.New("managed setup requires a private absolute state directory")
+		if err != nil {
+			return err
 		}
 		chiefOptions = execution.Options{
 			Image: "difqo-codex:0.171.0", Runtime: "docker", ArtifactRoot: artifactPath,
 			AuthHome: filepath.Join(filepath.Dir(managedSetup), "codex-home"),
 		}
 		setup = controlplane.ManagedSetup{
-			CodexHelper:  filepath.Join(filepath.Dir(installed), "first-goal-macos"),
-			ChiefTalk:    chiefOptions.Talk,
-			GitHubOrigin: stagingConnections, GitHubConnection: filepath.Join(managedSetup, "github-connection.json"),
+			CodexHelper:   filepath.Join(filepath.Dir(installed), "first-goal-macos"),
+			ChiefTalk:     chiefOptions.Talk,
+			ChiefProjects: catalog.list,
+			GitHubOrigin:  stagingConnections, GitHubConnection: filepath.Join(managedSetup, "github-connection.json"),
 			GitHubPoll: func(ctx context.Context, enrollment store.GitHubEnrollment, grant githubconnection.Grant) (int, error) {
 				return githubintake.Poll(ctx, githubintake.Config{
 					Enrollment: enrollment, Repository: grant.Repository, Handle: "difqo", Token: grant.Token,
 				}, tasks)
 			},
+		}
+		if catalog.path != "" {
+			setup.AddChiefProject = catalog.add
 		}
 		if slackRelay == "" && slackFixture == "" {
 			slackRelay = stagingConnections
@@ -253,10 +262,10 @@ func run(args []string) error {
 		defer stopSlack()
 		go slack.Run(slackCtx)
 	}
-	if managedSetup != "" && len(projects) > 0 {
+	if managedSetup != "" {
 		workerCtx, stopWorker := context.WithCancel(context.Background())
 		defer stopWorker()
-		go worker.RunChiefQueue(workerCtx, tasks, projects, chiefOptions, func(project store.SpecialistProject) bool {
+		go worker.RunChiefQueue(workerCtx, tasks, catalog.list, chiefOptions, func(project store.SpecialistProject) bool {
 			checkout, binding, err := resolveBinding(project.Checkout, project.Version)
 			return err == nil && checkout == project.Checkout && binding == project.Binding
 		})

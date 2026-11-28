@@ -36,7 +36,7 @@ const runJoins = `
 	LEFT JOIN specialist_proposals approved ON approved.id = pinned.proposal_id`
 
 func (s Specialists) Project(id string) (SpecialistProject, bool) {
-	for _, project := range s.Projects {
+	for _, project := range s.ProjectCatalog() {
 		if project.ID == id {
 			return project, true
 		}

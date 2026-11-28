@@ -390,23 +390,56 @@ function CodingTurn({ goal, openSetup }) {
   </>
 }
 
-function ConfirmProject({ turn, addTask }) {
-  const [projects, setProjects] = useState(null)
+function AddProject({ onSaved }) {
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState('')
+  const [open, setOpen] = useState(false)
+
+  async function save(event) {
+    event.preventDefault()
+    if (busy) return
+    const form = event.currentTarget
+    const payload = Object.fromEntries(new FormData(form))
+    setBusy(true)
+    setError('')
+    try {
+      const response = await request('/chief/projects', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      })
+      onSaved(await response.json())
+      form.reset()
+      setOpen(false)
+    } catch (error) {
+      setError(error instanceof RequestError && [400, 405].includes(error.status)
+        ? error.message : 'Couldn’t save the project. Try again.')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return <>
+    <button type="button" className="subtle" aria-expanded={open} disabled={busy}
+      onClick={() => setOpen(value => !value)}>{open ? 'Cancel project setup' : 'Add local project'}</button>
+    {open && <form className="project-setup" onSubmit={save}>
+      <label>Project name<input name="name" maxLength={160} required autoFocus /></label>
+      <label>Git checkout path<input name="checkout" placeholder="/Users/you/project" required /></label>
+      <label>Check command<input name="check" placeholder="npm test" maxLength={4096} required /></label>
+      <p>Use a check you trust. Difqo runs it in the isolated project workspace.</p>
+      {error && <p role="alert">{error}</p>}
+      <div className="actions"><button type="submit" className="primary" disabled={busy}>{busy ? 'Saving…' : 'Save project'}</button></div>
+    </form>}
+  </>
+}
+
+function ConfirmProject({ turn, addTask, projectCatalog }) {
+  const { projects, canAdd, load, readError, onAdded } = projectCatalog
   const [project, setProject] = useState('')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   const [saved, setSaved] = useState(null)
   const confirmed = turn.job_id || saved
-
-  async function load() {
-    setError('')
-    try {
-      const response = await request('/chief/projects')
-      setProjects(await response.json())
-    } catch {
-      setError('Couldn’t load the project catalog. Try again.')
-    }
-  }
 
   async function confirm(event) {
     event.preventDefault()
@@ -432,17 +465,21 @@ function ConfirmProject({ turn, addTask }) {
 
   if (confirmed) return <p><a href={'#goal-' + confirmed}>View coding goal</a></p>
   return <details className="review" onToggle={event => {
-    if (event.currentTarget.open && projects === null && !error) load()
+    if (event.currentTarget.open && projects === null && !readError) load()
   }}>
     <summary>Choose a project</summary>
     <p>{turn.proposed_goal}</p>
     {error && <p role="alert">{error}</p>}
-    {projects === null && (error
-      ? <button type="button" onClick={load}>Reload projects</button>
+    {projects === null && (readError
+      ? <p role="alert">{readError} <button type="button" onClick={load}>Reload projects</button></p>
       : <p role="status">Loading projects…</p>)}
-    {projects?.length === 0 && <p>Add a local project with a check in the
-      {' '}<a href="https://github.com/nep-ai/difqo/blob/main/docs/macos-pilot.md#run-a-coding-request-on-a-project">pilot project catalog</a>.
+    {projects?.length === 0 && !canAdd && <p>This service has no eligible projects. Configure its
+      {' '}<a href="https://github.com/nep-ai/difqo/blob/main/docs/macos-pilot.md#run-a-coding-request-on-a-project">project catalog</a>.
     </p>}
+    {canAdd && <AddProject onSaved={saved => {
+      onAdded(saved)
+      setProject(saved.id)
+    }} />}
     {projects?.length > 0 && <form className="actions" onSubmit={confirm}>
       <label htmlFor={'project-' + turn.id}>Project</label>
       <select id={'project-' + turn.id} value={project} onChange={event => setProject(event.target.value)} disabled={busy}>
@@ -454,7 +491,7 @@ function ConfirmProject({ turn, addTask }) {
   </details>
 }
 
-function ChiefTurn({ turn, addTask }) {
+function ChiefTurn({ turn, addTask, projectCatalog }) {
   return <>
     <article className="turn user" aria-label="You"><div className="turn-content">
       {turn.text && <p>{turn.text}</p>}
@@ -467,12 +504,35 @@ function ChiefTurn({ turn, addTask }) {
       {turn.state === 'running' && <p role="status">Thinking…</p>}
       {turn.state === 'attention' && <p role="status">{turn.problem}</p>}
       {turn.state === 'completed' && <p>{turn.reply}</p>}
-      {turn.state === 'completed' && turn.proposed_goal && <ConfirmProject turn={turn} addTask={addTask} />}
+      {turn.state === 'completed' && turn.proposed_goal && <ConfirmProject turn={turn} addTask={addTask} projectCatalog={projectCatalog} />}
     </div></article>
   </>
 }
 
 function Chat({ goals, chiefTurns, chiefAvailable, connection, submit, addTask, setupDialog, setupOpen, openSetup, closeSetup }) {
+  const [catalog, setCatalog] = useState({ projects: null, canAdd: false })
+  const [catalogError, setCatalogError] = useState('')
+  const loadingCatalog = useRef(false)
+  async function loadCatalog() {
+    if (loadingCatalog.current) return
+    loadingCatalog.current = true
+    setCatalogError('')
+    try {
+      const response = await request('/chief/projects')
+      const result = await response.json()
+      setCatalog({ projects: result.projects, canAdd: result.can_add })
+    } catch {
+      setCatalogError('Couldn’t load the project catalog.')
+    } finally {
+      loadingCatalog.current = false
+    }
+  }
+  const projectCatalog = { ...catalog, load: loadCatalog, readError: catalogError, onAdded(saved) {
+    setCatalog(current => ({
+      ...current,
+      projects: current.projects.some(project => project.id === saved.id) ? current.projects : [...current.projects, saved],
+    }))
+  } }
   const [draft, setDraft] = useState('')
   const [codingGoal, setCodingGoal] = useState(false)
   const requestID = useRef(null)
@@ -563,7 +623,7 @@ function Chat({ goals, chiefTurns, chiefAvailable, connection, submit, addTask, 
       ].sort((a, b) => Date.parse(a.item.created_at) - Date.parse(b.item.created_at)).map(({ item, kind }) =>
         kind === 'goal'
           ? <CodingTurn key={'goal-' + item.id} goal={item} openSetup={openSetup} />
-          : <ChiefTurn key={'chat-' + item.id} turn={item} addTask={addTask} />)}
+          : <ChiefTurn key={'chat-' + item.id} turn={item} addTask={addTask} projectCatalog={projectCatalog} />)}
       <div ref={end} />
     </section> : <section className="welcome">
       <Mark />

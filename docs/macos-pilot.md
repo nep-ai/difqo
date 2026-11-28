@@ -45,9 +45,12 @@ coding goal**. The installed CLI can send to the same conversation with
 
 ### Run a coding request on a project
 
-For the pilot, register an existing local Git checkout in the private
-`projects.json` file under `~/Library/Application Support/Difqo/service/`.
-For example:
+In a coding request, open **Choose a project** and select **Add local
+project**. Enter a name, the absolute path to an existing local Git checkout,
+and a check command you trust. The project is available immediately.
+
+The CLI fallback is a private `projects.json` file under
+`~/Library/Application Support/Difqo/service/`. For example:
 
 ```json
 [

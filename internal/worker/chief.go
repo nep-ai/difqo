@@ -13,11 +13,11 @@ import (
 
 // RunChiefQueue starts at most one project coding worker at a time. Jobs
 // survive service restarts and can only be claimed by their registered binding.
-func RunChiefQueue(ctx context.Context, tasks store.Tasks, projects []store.SpecialistProject, options execution.Options, validate func(store.SpecialistProject) bool) {
+func RunChiefQueue(ctx context.Context, tasks store.Tasks, projects func() []store.SpecialistProject, options execution.Options, validate func(store.SpecialistProject) bool) {
 	ticker := time.NewTicker(3 * time.Second)
 	defer ticker.Stop()
 	for {
-		for _, project := range projects {
+		for _, project := range projects() {
 			if ctx.Err() != nil {
 				return
 			}

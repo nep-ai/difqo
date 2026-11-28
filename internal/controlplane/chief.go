@@ -17,8 +17,8 @@ import (
 
 var chatRequestID = regexp.MustCompile(`^[a-f0-9-]{36}$`)
 
-func registerChief(router *http.ServeMux, tasks store.Tasks, projects []store.SpecialistProject, talk func(context.Context, []store.ChatTurn, store.ChatTurn) (store.ChiefAnswer, error)) {
-	registerChiefProjects(router, tasks, projects)
+func registerChief(router *http.ServeMux, tasks store.Tasks, projects func() []store.SpecialistProject, add func(string, string, string) (store.SpecialistProject, error), talk func(context.Context, []store.ChatTurn, store.ChatTurn) (store.ChiefAnswer, error)) {
+	registerChiefProjects(router, tasks, projects, add)
 	router.HandleFunc("GET /chief/conversation", func(w http.ResponseWriter, r *http.Request) {
 		turns, err := tasks.ChiefTurns(r.Context())
 		if err != nil {
