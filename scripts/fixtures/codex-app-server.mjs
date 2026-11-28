@@ -29,6 +29,12 @@ for await (const line of responses) {
       if (!decision || request.params.input[0].text.slice(decision[0].length) !== 'Use the line after in greeting.txt.\n\nTask goal:\nReplace the fixture greeting') {
         throw new Error('Unexpected task goal or decision revision');
       }
+      const [, note, imageLabel, screenshot, ...extra] = request.params.input;
+      if (extra.length || note?.type !== 'text' || !note.text.includes('Synthetic fixture context.') ||
+          imageLabel?.type !== 'text' || !imageLabel.text.includes('screenshot.png') ||
+          screenshot?.type !== 'image' || !screenshot.url.startsWith('data:image/png;base64,iVBORw0KGgo')) {
+        throw new Error('Expected the fixture file and screenshot');
+      }
       if (readFileSync('greeting.txt', 'utf8') !== 'before\n') {
         throw new Error('Unexpected source checkout');
       }

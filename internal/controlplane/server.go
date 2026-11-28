@@ -134,9 +134,10 @@ func Handler(tasks store.Tasks, web fs.FS, artifacts *os.Root, runtimeChoice str
 
 	router.HandleFunc("POST /tasks", func(w http.ResponseWriter, r *http.Request) {
 		var request struct {
-			Goal string `json:"goal"`
+			Goal        string             `json:"goal"`
+			Attachments []store.Attachment `json:"attachments,omitempty"`
 		}
-		if !decode(w, r, &request) {
+		if !decodeLimit(w, r, &request, maxMessageBody) {
 			return
 		}
 		goal := strings.TrimSpace(request.Goal)
@@ -144,7 +145,11 @@ func Handler(tasks store.Tasks, web fs.FS, artifacts *os.Root, runtimeChoice str
 			http.Error(w, "goal must contain 1–4096 characters and no NUL", http.StatusBadRequest)
 			return
 		}
-		task, err := tasks.Create(r.Context(), goal)
+		if err := validateAttachments(request.Attachments); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		task, err := tasks.CreateWithAttachments(r.Context(), goal, request.Attachments)
 		if err != nil {
 			storeError(w, err)
 			return
@@ -169,6 +174,7 @@ func Handler(tasks store.Tasks, web fs.FS, artifacts *os.Root, runtimeChoice str
 		var request struct {
 			GitHubRepositoryID int64 `json:"github_repository_id,omitempty"`
 			TaskID             int64 `json:"task_id,omitempty"`
+			AcceptAttachments  bool  `json:"accept_attachments,omitempty"`
 		}
 		if !decode(w, r, &request) {
 			return
@@ -179,7 +185,9 @@ func Handler(tasks store.Tasks, web fs.FS, artifacts *os.Root, runtimeChoice str
 		}
 		var task store.Task
 		var err error
-		if request.TaskID != 0 {
+		if request.AcceptAttachments {
+			task, err = tasks.ClaimCodex(r.Context(), request.GitHubRepositoryID, request.TaskID)
+		} else if request.TaskID != 0 {
 			task, err = tasks.ClaimLocalTask(r.Context(), request.TaskID)
 		} else {
 			task, err = tasks.Claim(r.Context(), request.GitHubRepositoryID)
@@ -192,6 +200,7 @@ func Handler(tasks store.Tasks, web fs.FS, artifacts *os.Root, runtimeChoice str
 			storeError(w, err)
 			return
 		}
+		w.Header().Set("Cache-Control", "no-store")
 		writeJSON(w, http.StatusOK, task)
 	})
 
@@ -258,12 +267,16 @@ func readID(w http.ResponseWriter, r *http.Request) (int64, bool) {
 }
 
 func decode(w http.ResponseWriter, r *http.Request, dst any) bool {
+	return decodeLimit(w, r, dst, 64<<10)
+}
+
+func decodeLimit(w http.ResponseWriter, r *http.Request, dst any, limit int64) bool {
 	mediaType, _, _ := mime.ParseMediaType(r.Header.Get("Content-Type"))
 	if mediaType != "application/json" {
 		http.Error(w, "expected application/json", http.StatusUnsupportedMediaType)
 		return false
 	}
-	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 64<<10))
+	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, limit))
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(dst); err != nil || decoder.Decode(new(any)) != io.EOF {
 		http.Error(w, "invalid JSON request", http.StatusBadRequest)

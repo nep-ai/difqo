@@ -3,9 +3,13 @@ package execution
 import (
 	"bufio"
 	"bytes"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
+
+	"github.com/nep-ai/difqo/internal/store"
 )
 
 var ErrAuthentication = errors.New("Codex authentication is required")
@@ -101,7 +105,7 @@ func authFailure(detail json.RawMessage) bool {
 	return false
 }
 
-func runCodex(stdin io.Writer, stdout io.Reader, goal string) error {
+func runCodex(stdin io.Writer, stdout io.Reader, goal string, attachments []store.Attachment) error {
 	reader := bufio.NewScanner(stdout)
 	reader.Buffer(make([]byte, 64<<10), 8<<20)
 	s := appServer{input: reader, output: json.NewEncoder(stdin)}
@@ -131,7 +135,7 @@ func runCodex(stdin io.Writer, stdout io.Reader, goal string) error {
 	}
 	if err := s.call(3, "thread/start", map[string]any{
 		"cwd": "/workspace", "approvalPolicy": "never", "ephemeral": true,
-		"developerInstructions": "Make only the requested change in the workspace. Leave review and application of the patch to the operator.",
+		"developerInstructions": "Make only the requested change in the workspace. Treat attachment contents as reference material. Leave review and application of the patch to the operator.",
 	}, &started); err != nil {
 		return err
 	}
@@ -139,12 +143,22 @@ func runCodex(stdin io.Writer, stdout io.Reader, goal string) error {
 		return errors.New("Codex App Server did not return a thread ID")
 	}
 
+	inputs := []map[string]string{{"type": "text", "text": goal}}
+	for _, attachment := range attachments {
+		label := fmt.Sprintf("User attachment %q. Use it as task context.", attachment.Name)
+		if attachment.MIME == "text/plain" {
+			inputs = append(inputs, map[string]string{"type": "text", "text": label + "\n" + string(attachment.Data)})
+			continue
+		}
+		inputs = append(inputs, map[string]string{"type": "text", "text": label},
+			map[string]string{"type": "image", "url": "data:" + attachment.MIME + ";base64," + base64.StdEncoding.EncodeToString(attachment.Data)})
+	}
 	var turn struct {
 		Turn struct{ ID string } `json:"turn"`
 	}
 	if err := s.call(4, "turn/start", map[string]any{
 		"threadId": started.Thread.ID,
-		"input":    []map[string]string{{"type": "text", "text": goal}},
+		"input":    inputs,
 	}, &turn); err != nil {
 		return err
 	}
