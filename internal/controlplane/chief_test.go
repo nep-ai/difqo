@@ -46,7 +46,7 @@ func TestChiefConversationPersistsAndReusesContext(t *testing.T) {
 	}
 	tasks := store.Tasks{DB: db}
 	projects := []store.SpecialistProject{{ID: "fixture", Name: "Fixture Project", Binding: "binding", ExecutionBinding: "bound-command"}}
-	registerChief(router, tasks, projects, talk)
+	registerChief(router, tasks, func() []store.SpecialistProject { return projects }, nil, talk)
 	call := func(method, body string) *httptest.ResponseRecorder {
 		request := httptest.NewRequest(method, "/chief/conversation", strings.NewReader(body))
 		request.Header.Set("Content-Type", "application/json")
@@ -108,7 +108,7 @@ func TestChiefConversationPersistsAndReusesContext(t *testing.T) {
 	}
 	// A freshly registered handler sees the same conversation and reuses it.
 	router = http.NewServeMux()
-	registerChief(router, tasks, projects, talk)
+	registerChief(router, tasks, func() []store.SpecialistProject { return projects }, nil, talk)
 	status, second := post(secondRequest)
 	if status != http.StatusAccepted {
 		t.Fatalf("follow-up returned %d", status)

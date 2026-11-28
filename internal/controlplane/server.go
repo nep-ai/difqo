@@ -35,12 +35,14 @@ type ManagedSetup struct {
 	GitHubPoll        func(context.Context, store.GitHubEnrollment, githubconnection.Grant) (int, error)
 	SlackRequiresCode bool
 	SlackPlainText    bool
+	ChiefProjects     func() []store.SpecialistProject
+	AddChiefProject   func(name, path, check string) (store.SpecialistProject, error)
 	ChiefTalk         func(context.Context, []store.ChatTurn, store.ChatTurn) (store.ChiefAnswer, error)
 }
 
 func Handler(tasks store.Tasks, web fs.FS, artifacts *os.Root, runtimeChoice string, projects []store.SpecialistProject, slack *slackintake.Connections, setup ManagedSetup) http.Handler {
 	router := http.NewServeMux()
-	specialists := store.Specialists{DB: tasks.DB, Projects: projects}
+	specialists := store.Specialists{DB: tasks.DB, Projects: projects, Catalog: setup.ChiefProjects}
 	registerSpecialists(router, specialists)
 	registerRuns(router, tasks, specialists)
 	registerDecisions(router, tasks, specialists)
@@ -49,7 +51,11 @@ func Handler(tasks store.Tasks, web fs.FS, artifacts *os.Root, runtimeChoice str
 	}
 
 	if setup.ChiefTalk != nil {
-		registerChief(router, tasks, projects, setup.ChiefTalk)
+		list := setup.ChiefProjects
+		if list == nil {
+			list = func() []store.SpecialistProject { return projects }
+		}
+		registerChief(router, tasks, list, setup.AddChiefProject, setup.ChiefTalk)
 	}
 	if setup.CodexHelper != "" {
 		registerCodexSetup(router, setup.CodexHelper, tasks)

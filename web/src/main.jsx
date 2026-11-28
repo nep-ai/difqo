@@ -390,8 +390,52 @@ function CodingTurn({ goal, openSetup }) {
   </>
 }
 
+function AddProject({ onSaved }) {
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState('')
+  const [open, setOpen] = useState(false)
+
+  async function save(event) {
+    event.preventDefault()
+    if (busy) return
+    const form = event.currentTarget
+    const payload = Object.fromEntries(new FormData(form))
+    setBusy(true)
+    setError('')
+    try {
+      const response = await request('/chief/projects', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      })
+      onSaved(await response.json())
+      form.reset()
+      setOpen(false)
+    } catch (error) {
+      setError(error instanceof RequestError && [400, 405].includes(error.status)
+        ? error.message : 'Couldn’t save the project. Try again.')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return <>
+    <button type="button" className="subtle" aria-expanded={open} disabled={busy}
+      onClick={() => setOpen(value => !value)}>{open ? 'Cancel project setup' : 'Add local project'}</button>
+    {open && <form className="project-setup" onSubmit={save}>
+      <label>Project name<input name="name" maxLength={160} required autoFocus /></label>
+      <label>Git checkout path<input name="checkout" placeholder="/Users/you/project" required /></label>
+      <label>Check command<input name="check" placeholder="npm test" maxLength={4096} required /></label>
+      <p>Use a check you trust. Difqo runs it in the isolated project workspace.</p>
+      {error && <p role="alert">{error}</p>}
+      <div className="actions"><button type="submit" className="primary" disabled={busy}>{busy ? 'Saving…' : 'Save project'}</button></div>
+    </form>}
+  </>
+}
+
 function ConfirmProject({ turn, addTask }) {
   const [projects, setProjects] = useState(null)
+  const [canAdd, setCanAdd] = useState(false)
   const [project, setProject] = useState('')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
@@ -402,7 +446,9 @@ function ConfirmProject({ turn, addTask }) {
     setError('')
     try {
       const response = await request('/chief/projects')
-      setProjects(await response.json())
+      const catalog = await response.json()
+      setProjects(catalog.projects)
+      setCanAdd(catalog.can_add)
     } catch {
       setError('Couldn’t load the project catalog. Try again.')
     }
@@ -440,9 +486,13 @@ function ConfirmProject({ turn, addTask }) {
     {projects === null && (error
       ? <button type="button" onClick={load}>Reload projects</button>
       : <p role="status">Loading projects…</p>)}
-    {projects?.length === 0 && <p>Add a local project with a check in the
-      {' '}<a href="https://github.com/nep-ai/difqo/blob/main/docs/macos-pilot.md#run-a-coding-request-on-a-project">pilot project catalog</a>.
+    {projects?.length === 0 && !canAdd && <p>This service has no eligible projects. Configure its
+      {' '}<a href="https://github.com/nep-ai/difqo/blob/main/docs/macos-pilot.md#run-a-coding-request-on-a-project">project catalog</a>.
     </p>}
+    {canAdd && <AddProject onSaved={saved => {
+      setProjects(current => [...current, saved])
+      setProject(saved.id)
+    }} />}
     {projects?.length > 0 && <form className="actions" onSubmit={confirm}>
       <label htmlFor={'project-' + turn.id}>Project</label>
       <select id={'project-' + turn.id} value={project} onChange={event => setProject(event.target.value)} disabled={busy}>

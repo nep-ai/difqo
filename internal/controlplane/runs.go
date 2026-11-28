@@ -12,7 +12,7 @@ import (
 func registerRuns(router *http.ServeMux, tasks store.Tasks, specialists store.Specialists) {
 	router.HandleFunc("GET /specialist-projects", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Cache-Control", "no-store")
-		writeJSON(w, http.StatusOK, append([]store.SpecialistProject{}, specialists.Projects...))
+		writeJSON(w, http.StatusOK, append([]store.SpecialistProject{}, specialists.ProjectCatalog()...))
 	})
 	router.HandleFunc("POST /specialist-runs", func(w http.ResponseWriter, r *http.Request) {
 		var input struct {

@@ -34,7 +34,7 @@ flowchart LR
     Browser -->|"Send a message or file to Chief of Staff"| Server
     Server -->|"Persist the conversation and one active turn lease"| Postgres
     Server -->|"Run a conversation turn with no project checkout"| ChiefRuntime["Isolated Chief of Staff Codex turn"]
-    Browser -->|"Confirm a coding goal and eligible project"| Server
+    Browser -->|"Register a checkout and trusted check, then confirm the project"| Server
     Server -->|"Pin project binding and saved decision in the coding queue"| Postgres
     LaunchAgent -->|"Run a bounded local coding queue for confirmed goals"| Worker
     Browser -->|"Sign in with ChatGPT, link Slack, or connect and sync GitHub"| Server

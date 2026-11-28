@@ -62,7 +62,9 @@ When a conversation turn proposes a coding goal, the operator chooses a
 registered project before dispatch. The local service pins the project ID,
 checkout binding, configured check and saved decision, then runs the queued
 job with the existing lease, sandbox and patch review. The installed service
-reads its project catalog from its private state directory. Coding and
+reads its project catalog from its private state directory. The local UI can
+add a checkout and trusted check to that catalog. A successful save refreshes
+the project list and local worker without a restart. Coding and
 conversation turns share the installation's Codex sign-in and serialize access
 to that credential directory. Independent review and Slack conversation
 replies still use their separate implementation steps.
