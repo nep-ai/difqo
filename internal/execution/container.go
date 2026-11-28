@@ -64,6 +64,11 @@ func (c container) codex(ctx context.Context, authHome, goal string, attachments
 }
 
 func (c container) codexTurn(ctx context.Context, authHome string, run func(io.Writer, io.Reader) error, overrides ...string) (string, error) {
+	release, err := lockCodexHome(ctx, authHome)
+	if err != nil {
+		return "Could not access the local Codex credential directory before the turn deadline.", err
+	}
+	defer release()
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	args := []string{

@@ -35,7 +35,7 @@ type ManagedSetup struct {
 	GitHubPoll        func(context.Context, store.GitHubEnrollment, githubconnection.Grant) (int, error)
 	SlackRequiresCode bool
 	SlackPlainText    bool
-	ChiefTalk         func(context.Context, []store.ChatTurn, store.ChatTurn) (string, error)
+	ChiefTalk         func(context.Context, []store.ChatTurn, store.ChatTurn) (store.ChiefAnswer, error)
 }
 
 func Handler(tasks store.Tasks, web fs.FS, artifacts *os.Root, runtimeChoice string, projects []store.SpecialistProject, slack *slackintake.Connections, setup ManagedSetup) http.Handler {
@@ -49,7 +49,7 @@ func Handler(tasks store.Tasks, web fs.FS, artifacts *os.Root, runtimeChoice str
 	}
 
 	if setup.ChiefTalk != nil {
-		registerChief(router, tasks, setup.ChiefTalk)
+		registerChief(router, tasks, projects, setup.ChiefTalk)
 	}
 	if setup.CodexHelper != "" {
 		registerCodexSetup(router, setup.CodexHelper, tasks)

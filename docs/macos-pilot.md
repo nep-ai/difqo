@@ -43,6 +43,32 @@ coding goal**. The installed CLI can send to the same conversation with
 `difqo chat "Explain these symptoms"` or
 `difqo chat -file screenshot.png "What do you see?"`.
 
+### Run a coding request on a project
+
+For the pilot, register an existing local Git checkout in the private
+`projects.json` file under `~/Library/Application Support/Difqo/service/`.
+For example:
+
+```json
+[
+  {
+    "id": "sample",
+    "name": "Sample project",
+    "checkout": "/absolute/path/to/the/checkout",
+    "binding_version": "1",
+    "check": "npm test"
+  }
+]
+```
+
+Use a check the operator has approved for this repository. Change the file
+mode to `600` and restart the Difqo service after updating the catalog.
+In the conversation, describe a coding request, open **Choose a project**,
+review the proposed goal, select the project, and choose **Run coding goal**.
+The local worker uses the same ChatGPT sign-in and creates a checked patch
+in an isolated workspace. Open the linked coding goal to review the patch
+and rerun the check.
+
 ### Connect the staging integrations
 
 - In **Connections → Slack**, enter the Slack pilot enrollment code and

@@ -332,7 +332,7 @@ function ProjectFile({ goal, openSetup }) {
   const completed = goal.status === 'completed'
   const failed = completed && result?.exit_code !== 0
   const status = failed ? 'Run failed' : statuses[goal.status] ?? goal.status
-  return <section className="attachment" aria-label={'Goal ' + goal.id}>
+  return <section className="attachment" id={'goal-' + goal.id} aria-label={'Goal ' + goal.id}>
     <div className="project-file-meta"><span>Project file</span><span>Goal {goal.id}</span></div>
     <div className="attachment-title">
       <h2>{goal.goal}</h2>
@@ -340,7 +340,9 @@ function ProjectFile({ goal, openSetup }) {
     </div>
     {goal.specialist_run && <p>{goal.specialist_run.project.name} ({goal.specialist_run.project.id}) · {goal.specialist_run.name} · Revision {goal.specialist_run.revision}</p>}
     {goal.specialist_run && <p>{goal.decision ? 'Saved decision revision ' + goal.decision.id : 'No saved decision for this project.'}</p>}
-    {goal.status === 'queued' && <p>{goal.specialist_run ? 'Waiting for a worker bound to this project.' : 'Goal saved. Work starts when a local worker claims it.'}</p>}
+    {goal.chief_project && <p>Project · {goal.chief_project.name}</p>}
+    {goal.status === 'queued' && <p>{goal.chief_project ? 'Queued for the local coding worker. You can check Docker and Codex in Connections.' :
+      goal.specialist_run ? 'Waiting for a worker bound to this project.' : 'Goal saved. Work starts when a local worker claims it.'}</p>}
     {mac && goal.status === 'queued' && goal.goal === sampleGoal && !goal.specialist_run &&
       Number.isSafeInteger(goal.id) && goal.id > 0 &&
       <RunSample id={goal.id} request={request} openSetup={openSetup} fallback={<div>
@@ -388,7 +390,71 @@ function CodingTurn({ goal, openSetup }) {
   </>
 }
 
-function ChiefTurn({ turn }) {
+function ConfirmProject({ turn, addTask }) {
+  const [projects, setProjects] = useState(null)
+  const [project, setProject] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState('')
+  const [saved, setSaved] = useState(null)
+  const confirmed = turn.job_id || saved
+
+  async function load() {
+    setError('')
+    try {
+      const response = await request('/chief/projects')
+      setProjects(await response.json())
+    } catch {
+      setError('Couldn’t load the project catalog. Try again.')
+    }
+  }
+
+  async function confirm(event) {
+    event.preventDefault()
+    if (!project || busy || confirmed) return
+    setBusy(true)
+    setError('')
+    try {
+      const response = await request('/chief/conversation/' + turn.id + '/project', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ project_id: project }),
+      })
+      const task = await response.json()
+      setSaved(task.id)
+      addTask(task)
+    } catch (error) {
+      setError(error instanceof RequestError && [400, 409].includes(error.status)
+        ? error.message : 'Couldn’t confirm the project. Check this conversation and try again.')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  if (confirmed) return <p><a href={'#goal-' + confirmed}>View coding goal</a></p>
+  return <details className="review" onToggle={event => {
+    if (event.currentTarget.open && projects === null && !error) load()
+  }}>
+    <summary>Choose a project</summary>
+    <p>{turn.proposed_goal}</p>
+    {error && <p role="alert">{error}</p>}
+    {projects === null && (error
+      ? <button type="button" onClick={load}>Reload projects</button>
+      : <p role="status">Loading projects…</p>)}
+    {projects?.length === 0 && <p>Add a local project with a check in the
+      {' '}<a href="https://github.com/nep-ai/difqo/blob/main/docs/macos-pilot.md#run-a-coding-request-on-a-project">pilot project catalog</a>.
+    </p>}
+    {projects?.length > 0 && <form className="actions" onSubmit={confirm}>
+      <label htmlFor={'project-' + turn.id}>Project</label>
+      <select id={'project-' + turn.id} value={project} onChange={event => setProject(event.target.value)} disabled={busy}>
+        <option value="">Select a project</option>
+        {projects.map(item => <option key={item.id} value={item.id}>{item.name}</option>)}
+      </select>
+      <button type="submit" className="primary" disabled={!project || busy}>{busy ? 'Starting…' : 'Run coding goal'}</button>
+    </form>}
+  </details>
+}
+
+function ChiefTurn({ turn, addTask }) {
   return <>
     <article className="turn user" aria-label="You"><div className="turn-content">
       {turn.text && <p>{turn.text}</p>}
@@ -401,6 +467,7 @@ function ChiefTurn({ turn }) {
       {turn.state === 'running' && <p role="status">Thinking…</p>}
       {turn.state === 'attention' && <p role="status">{turn.problem}</p>}
       {turn.state === 'completed' && <p>{turn.reply}</p>}
+      {turn.state === 'completed' && turn.proposed_goal && <ConfirmProject turn={turn} addTask={addTask} />}
     </div></article>
   </>
 }
@@ -496,7 +563,7 @@ function Chat({ goals, chiefTurns, chiefAvailable, connection, submit, addTask, 
       ].sort((a, b) => Date.parse(a.item.created_at) - Date.parse(b.item.created_at)).map(({ item, kind }) =>
         kind === 'goal'
           ? <CodingTurn key={'goal-' + item.id} goal={item} openSetup={openSetup} />
-          : <ChiefTurn key={'chat-' + item.id} turn={item} />)}
+          : <ChiefTurn key={'chat-' + item.id} turn={item} addTask={addTask} />)}
       <div ref={end} />
     </section> : <section className="welcome">
       <Mark />

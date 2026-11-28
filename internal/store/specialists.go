@@ -12,10 +12,14 @@ var ErrSpecialistStale = errors.New("specialist proposal is stale")
 var ErrSpecialistProject = errors.New("select at least one registered project")
 
 type SpecialistProject struct {
-	ID      string `json:"id"`
-	Name    string `json:"name"`
-	Label   string `json:"label"`
-	Binding string `json:"binding"`
+	ID               string `json:"id"`
+	Name             string `json:"name"`
+	Label            string `json:"label"`
+	Binding          string `json:"binding"`
+	ExecutionBinding string `json:"execution_binding,omitempty"`
+	Checkout         string `json:"-"`
+	Check            string `json:"-"`
+	Version          string `json:"-"`
 }
 
 type SpecialistConfig struct {

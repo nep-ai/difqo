@@ -37,6 +37,7 @@ func loadProjects(path string) ([]store.SpecialistProject, error) {
 		Name     string `json:"name"`
 		Checkout string `json:"checkout"`
 		Version  string `json:"binding_version"`
+		Check    string `json:"check,omitempty"`
 	}
 	decoder := json.NewDecoder(bytes.NewReader(data))
 	decoder.DisallowUnknownFields()
@@ -50,8 +51,9 @@ func loadProjects(path string) ([]store.SpecialistProject, error) {
 	for i, entry := range entries {
 		name := strings.TrimSpace(entry.Name)
 		version := strings.TrimSpace(entry.Version)
+		check := strings.TrimSpace(entry.Check)
 		if !projectID.MatchString(entry.ID) || ids[entry.ID] || name == "" || len(name) > 160 ||
-			version == "" || len(version) > 128 || !filepath.IsAbs(entry.Checkout) {
+			version == "" || len(version) > 128 || len(check) > 4096 || strings.ContainsRune(check, 0) || !filepath.IsAbs(entry.Checkout) {
 			return nil, fmt.Errorf("invalid or duplicate project binding at catalog entry %d", i+1)
 		}
 		checkout, binding, err := resolveBinding(entry.Checkout, version)
@@ -60,7 +62,15 @@ func loadProjects(path string) ([]store.SpecialistProject, error) {
 		}
 		ids[entry.ID] = true
 		paths[checkout] = true
-		projects = append(projects, store.SpecialistProject{ID: entry.ID, Name: name, Label: filepath.Base(checkout) + " · " + version, Binding: binding})
+		project := store.SpecialistProject{
+			ID: entry.ID, Name: name, Label: filepath.Base(checkout) + " · " + version, Binding: binding,
+			Checkout: checkout, Version: version, Check: check,
+		}
+		if check != "" {
+			fingerprint := sha256.Sum256([]byte(entry.ID + "\x00" + binding + "\x00" + check))
+			project.ExecutionBinding = hex.EncodeToString(fingerprint[:])
+		}
+		projects = append(projects, project)
 	}
 	return projects, nil
 }

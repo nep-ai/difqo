@@ -187,6 +187,7 @@ func run(args []string) error {
 	tasks := store.Tasks{DB: db}
 	const stagingConnections = "https://connections-staging.difqo.com"
 	var setup controlplane.ManagedSetup
+	var chiefOptions execution.Options
 	if managedSetup != "" {
 		installed, err := os.Executable()
 		info, stateErr := os.Lstat(managedSetup)
@@ -194,13 +195,13 @@ func run(args []string) error {
 			!info.IsDir() || info.Mode().Perm() != 0o700 {
 			return errors.New("managed setup requires a private absolute state directory")
 		}
-		chatOptions := execution.Options{
+		chiefOptions = execution.Options{
 			Image: "difqo-codex:0.171.0", Runtime: "docker", ArtifactRoot: artifactPath,
 			AuthHome: filepath.Join(filepath.Dir(managedSetup), "codex-home"),
 		}
 		setup = controlplane.ManagedSetup{
 			CodexHelper:  filepath.Join(filepath.Dir(installed), "first-goal-macos"),
-			ChiefTalk:    chatOptions.Talk,
+			ChiefTalk:    chiefOptions.Talk,
 			GitHubOrigin: stagingConnections, GitHubConnection: filepath.Join(managedSetup, "github-connection.json"),
 			GitHubPoll: func(ctx context.Context, enrollment store.GitHubEnrollment, grant githubconnection.Grant) (int, error) {
 				return githubintake.Poll(ctx, githubintake.Config{
@@ -251,6 +252,14 @@ func run(args []string) error {
 		slackCtx, stopSlack := context.WithCancel(context.Background())
 		defer stopSlack()
 		go slack.Run(slackCtx)
+	}
+	if managedSetup != "" && len(projects) > 0 {
+		workerCtx, stopWorker := context.WithCancel(context.Background())
+		defer stopWorker()
+		go worker.RunChiefQueue(workerCtx, tasks, projects, chiefOptions, func(project store.SpecialistProject) bool {
+			checkout, binding, err := resolveBinding(project.Checkout, project.Version)
+			return err == nil && checkout == project.Checkout && binding == project.Binding
+		})
 	}
 	log.Printf("Difqo API listening on http://%s", address)
 	return server.Serve(listener)
