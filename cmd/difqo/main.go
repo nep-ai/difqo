@@ -180,25 +180,25 @@ func run(args []string) error {
 		}
 		defer artifacts.Close()
 	}
-	projects, err := loadProjects(projectsPath)
+	if managedSetup != "" {
+		info, err := os.Lstat(managedSetup)
+		if err != nil || !filepath.IsAbs(managedSetup) || !info.IsDir() || info.Mode().Perm() != 0o700 {
+			return errors.New("managed setup requires a private absolute state directory")
+		}
+	}
+	catalog, err := openProjectCatalog(managedSetup, projectsPath)
 	if err != nil {
 		return err
 	}
+	projects := catalog.list()
 	tasks := store.Tasks{DB: db}
 	const stagingConnections = "https://connections-staging.difqo.com"
 	var setup controlplane.ManagedSetup
 	var chiefOptions execution.Options
-	catalog := &projectCatalog{projects: projects}
 	if managedSetup != "" {
 		installed, err := os.Executable()
-		info, stateErr := os.Lstat(managedSetup)
-		if err != nil || stateErr != nil || !filepath.IsAbs(managedSetup) ||
-			!info.IsDir() || info.Mode().Perm() != 0o700 {
-			return errors.New("managed setup requires a private absolute state directory")
-		}
-		managedCatalog := filepath.Join(managedSetup, "projects.json")
-		if projectsPath == "" || projectsPath == managedCatalog {
-			catalog.path = managedCatalog
+		if err != nil {
+			return err
 		}
 		chiefOptions = execution.Options{
 			Image: "difqo-codex:0.171.0", Runtime: "docker", ArtifactRoot: artifactPath,

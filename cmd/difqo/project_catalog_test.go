@@ -18,7 +18,10 @@ func TestProjectRegistrationPersistsAndRefreshesCatalog(t *testing.T) {
 		t.Fatalf("initialize fixture: %v: %s", err, out)
 	}
 	path := filepath.Join(dir, "projects.json")
-	catalog := &projectCatalog{path: path}
+	catalog, err := openProjectCatalog(dir, "")
+	if err != nil {
+		t.Fatal(err)
+	}
 	if _, err := catalog.add("Fixture", dir, "true"); err == nil {
 		t.Fatal("accepted a non-checkout directory")
 	}
@@ -33,9 +36,17 @@ func TestProjectRegistrationPersistsAndRefreshesCatalog(t *testing.T) {
 	if err != nil || info.Mode().Perm() != 0o600 {
 		t.Fatalf("catalog was not private: %v", err)
 	}
-	restarted, err := loadProjects(path)
-	if err != nil || !slices.Equal(restarted, catalog.list()) {
+	restarted, err := openProjectCatalog(dir, "")
+	if err != nil || !slices.Equal(restarted.list(), catalog.list()) {
 		t.Fatalf("restart did not preserve binding: %+v, %v", restarted, err)
+	}
+	external := filepath.Join(dir, "external.json")
+	if err := os.WriteFile(external, []byte("[]"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	custom, err := openProjectCatalog(dir, external)
+	if err != nil || custom.path != "" {
+		t.Fatalf("an explicit catalog should remain externally managed: %v", err)
 	}
 	if _, err := catalog.add("Duplicate", checkout, "true"); err == nil {
 		t.Fatal("accepted an already registered checkout")

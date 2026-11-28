@@ -20,6 +20,29 @@ type projectCatalog struct {
 	projects []store.SpecialistProject
 }
 
+func openProjectCatalog(managedSetup, path string) (*projectCatalog, error) {
+	catalog := &projectCatalog{}
+	if managedSetup != "" {
+		managed := filepath.Join(managedSetup, "projects.json")
+		if path == "" || path == managed {
+			catalog.path, path = managed, managed
+			info, err := os.Lstat(managed)
+			if errors.Is(err, os.ErrNotExist) {
+				return catalog, nil
+			}
+			if err != nil || !info.Mode().IsRegular() || info.Mode().Perm() != 0o600 {
+				return nil, errors.New("the managed project catalog must be a private regular file")
+			}
+		}
+	}
+	projects, err := loadProjects(path)
+	if err != nil {
+		return nil, err
+	}
+	catalog.projects = projects
+	return catalog, nil
+}
+
 func (c *projectCatalog) list() []store.SpecialistProject {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
