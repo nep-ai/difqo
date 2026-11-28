@@ -5,7 +5,6 @@ import (
 	"context"
 	"io"
 	"net/http"
-	"os/exec"
 	"regexp"
 	"strconv"
 	"strings"
@@ -120,16 +119,18 @@ func (s *codexSetup) run(helper, action string, id int64) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
+	s.runHelper(ctx, helper, action, id)
+}
 
+func (s *codexSetup) runHelper(ctx context.Context, helper, action string, id int64) {
 	args := []string{helper, action}
 	if action == "run" {
 		args = append(args, strconv.FormatInt(id, 10))
 	}
-	cmd := exec.CommandContext(ctx, "/bin/bash", args...)
+	cmd := setupCommand(ctx, args...)
 	reader, writer := io.Pipe()
 	defer reader.Close()
 	cmd.Stdout, cmd.Stderr = writer, writer
-	cmd.WaitDelay = 2 * time.Second
 	finished := make(chan error, 1)
 	go func() {
 		finished <- cmd.Run()
@@ -157,7 +158,15 @@ func (s *codexSetup) run(helper, action string, id int64) {
 	}
 	// Drain any output after an oversized line, then collect the exit status.
 	_, _ = io.Copy(io.Discard, reader)
-	if err := <-finished; err == nil && scanner.Err() == nil {
+	err := <-finished
+	if ctx.Err() != nil {
+		cleanupCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		message = "Codex setup timed out. Retry after Docker Desktop is ready."
+		if err := setupCommand(cleanupCtx, helper, "cleanup-login").Run(); err != nil {
+			message = "Codex setup timed out and Docker couldn’t confirm login cleanup. Restart Docker Desktop before retrying."
+		}
+	} else if err == nil && scanner.Err() == nil {
 		s.set(codexSetupView{State: "ready"})
 		return
 	}

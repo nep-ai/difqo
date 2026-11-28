@@ -8,7 +8,7 @@ fail() {
 }
 
 case "${1:-}" in
-  prepare|check) [ "$#" -eq 1 ] || fail 'Usage: first-goal-macos prepare|check' ;;
+  prepare|check|cleanup-login) [ "$#" -eq 1 ] || fail 'Usage: first-goal-macos prepare|check|cleanup-login' ;;
   run) [ "$#" -eq 2 ] && [[ "$2" =~ ^[1-9][0-9]*$ ]] || fail 'Usage: first-goal-macos run GOAL_ID' ;;
   *) fail 'Use first-goal-macos prepare or first-goal-macos run GOAL_ID.' ;;
 esac
@@ -24,6 +24,16 @@ image=difqo-codex:0.171.0
 unset DOCKER_HOST DOCKER_CONTEXT DOCKER_CONFIG
 export PATH="$PATH:/Applications/Docker.app/Contents/Resources/bin"
 command -v docker >/dev/null || fail 'Install Docker Desktop and open it, then retry.'
+login_name="difqo-first-goal-login-$(id -u)"
+login_label="io.difqo.first-goal-login=$(id -u)"
+if [ "$1" = cleanup-login ]; then
+  login_id=$(docker container ls --all --quiet \
+    --filter "name=^/$login_name$" --filter "label=$login_label")
+  if [ -n "$login_id" ]; then
+    docker container rm --force "$login_id" >/dev/null
+  fi
+  exit
+fi
 docker info >/dev/null 2>&1 || fail 'Start Docker Desktop, wait for its engine, then retry.'
 git --version >/dev/null || fail 'Install the macOS Command Line Tools with xcode-select --install, then retry.'
 [ -d "$support" ] || fail 'Start the installed Difqo app before setting up the worker.'
@@ -32,10 +42,10 @@ mkdir -p "$auth_home"
   fail 'The dedicated codex-home must be a private directory owned by your account.'
 
 codex_login() {
-  docker run --rm --pull=never --user "$(id -u):$(id -g)" \
+  docker run --rm --init --pull=never --name "$login_name" --label "$login_label" --user "$(id -u):$(id -g)" \
     --env HOME=/tmp --env CODEX_HOME=/codex-home \
     --mount "type=bind,src=$auth_home,dst=/codex-home" \
-    "$image" codex login "$@"
+    "$image" timeout -k 5s 16m codex login "$@"
 }
 
 if [ "$1" = prepare ]; then
