@@ -57,5 +57,6 @@ func (o Options) Talk(ctx context.Context, history []store.ChatTurn, message sto
 	if err := json.Unmarshal([]byte(response), &answer); err != nil {
 		return store.ChiefAnswer{}, errors.New("Codex did not return the expected conversation response")
 	}
+	answer.Reply = clipConversationText(answer.Reply, conversationTextLimit)
 	return answer, nil
 }

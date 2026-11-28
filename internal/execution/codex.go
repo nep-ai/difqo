@@ -122,6 +122,7 @@ func runCodexTurn(stdin io.Writer, stdout io.Reader, goal string, attachments []
 	reader.Buffer(make([]byte, 64<<10), 8<<20)
 	s := appServer{input: reader, output: json.NewEncoder(stdin)}
 	var finalReplies, otherReplies []agentMessage
+	structuredReply := len(schema) > 0
 	if reply != nil {
 		s.observe = func(m message) {
 			if m.Method != "item/completed" {
@@ -130,6 +131,12 @@ func runCodexTurn(stdin io.Writer, stdout io.Reader, goal string, attachments []
 			var item agentMessage
 			if json.Unmarshal(m.Params, &item) != nil || item.Item.Type != "agentMessage" {
 				return
+			}
+			if structuredReply && len(item.Item.Text) > structuredConversationLimit {
+				return
+			}
+			if !structuredReply {
+				item.Item.Text = clipConversationText(item.Item.Text, conversationTextLimit)
 			}
 			if item.Item.Phase == "final_answer" {
 				if len(finalReplies) < 32 {
@@ -228,9 +235,9 @@ func runCodexTurn(stdin io.Writer, stdout io.Reader, goal string, attachments []
 		}
 		if completion.Turn.Status == "completed" {
 			if reply != nil {
-				*reply = conversationReply(finalReplies, started.Thread.ID, turn.Turn.ID)
+				*reply = conversationReply(finalReplies, started.Thread.ID, turn.Turn.ID, structuredReply)
 				if *reply == "" {
-					*reply = conversationReply(otherReplies, started.Thread.ID, turn.Turn.ID)
+					*reply = conversationReply(otherReplies, started.Thread.ID, turn.Turn.ID, structuredReply)
 				}
 				if *reply == "" {
 					return errors.New("Codex completed without a conversation reply")
@@ -258,7 +265,12 @@ type agentMessage struct {
 	}
 }
 
-func conversationReply(messages []agentMessage, thread, turn string) string {
+const (
+	conversationTextLimit       = 16 << 10
+	structuredConversationLimit = 256 << 10
+)
+
+func conversationReply(messages []agentMessage, thread, turn string, structured bool) string {
 	var final, commentary []string
 	for _, message := range messages {
 		if message.ThreadID != thread || message.TurnID != turn {
@@ -277,24 +289,40 @@ func conversationReply(messages []agentMessage, thread, turn string) string {
 	if len(final) == 0 {
 		final = commentary
 	}
-	const limit = 16 << 10
+	if structured {
+		// Structured responses are single JSON documents. Preserve complete
+		// syntax within the raw envelope limit, then cap decoded reply text.
+		for i := len(final) - 1; i >= 0; i-- {
+			if len(final[i]) <= structuredConversationLimit && json.Valid([]byte(final[i])) {
+				return final[i]
+			}
+		}
+		return ""
+	}
 	var combined strings.Builder
 	for _, text := range final {
 		if combined.Len() > 0 {
-			if combined.Len() >= limit-2 {
+			if combined.Len() >= conversationTextLimit-2 {
 				break
 			}
 			combined.WriteString("\n\n")
 		}
-		remaining := limit - combined.Len()
+		remaining := conversationTextLimit - combined.Len()
 		if len(text) >= remaining {
-			for remaining > 0 && remaining < len(text) && !utf8.RuneStart(text[remaining]) {
-				remaining--
-			}
-			combined.WriteString(text[:max(0, remaining)])
+			combined.WriteString(clipConversationText(text, remaining))
 			break
 		}
 		combined.WriteString(text)
 	}
 	return combined.String()
+}
+
+func clipConversationText(text string, limit int) string {
+	if len(text) <= limit {
+		return text
+	}
+	for limit > 0 && !utf8.RuneStart(text[limit]) {
+		limit--
+	}
+	return text[:limit]
 }

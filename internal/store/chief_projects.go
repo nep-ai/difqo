@@ -21,10 +21,12 @@ func (s Tasks) ConfirmChiefProject(ctx context.Context, turnID int64, project Sp
 
 	var goal string
 	var files, metadata []byte
+	var hasFiles bool
 	err = tx.QueryRowContext(ctx, `
-		SELECT COALESCE(proposed_goal, ''), attachments, attachment_metadata
+		SELECT COALESCE(proposed_goal, ''), attachments, attachment_metadata,
+			CASE WHEN jsonb_typeof(attachments) = 'array' THEN jsonb_array_length(attachments) > 0 ELSE false END
 		FROM chief_conversation_turns WHERE id = $1 AND state = 'completed'
-		FOR UPDATE`, turnID).Scan(&goal, &files, &metadata)
+		FOR UPDATE`, turnID).Scan(&goal, &files, &metadata, &hasFiles)
 	if err != nil {
 		return Task{}, err
 	}
@@ -43,7 +45,7 @@ func (s Tasks) ConfirmChiefProject(ctx context.Context, turnID int64, project Sp
 		return Task{}, err
 	}
 
-	if len(files) == 0 || string(files) == "null" {
+	if !hasFiles {
 		// The conversation passes a file-only turn into the next follow-up
 		// when that follow-up has no attachments of its own.
 		err := tx.QueryRowContext(ctx, `

@@ -88,7 +88,7 @@ func TestChiefConversationPersistsAndReusesContext(t *testing.T) {
 		}
 	}
 	firstRequest := `{"request_id":"00000000-0000-4000-8000-000000000001","attachments":[{"name":"fixture.txt","data":"Zml4dHVyZQ=="}]}`
-	secondRequest := `{"request_id":"00000000-0000-4000-8000-000000000002","text":"Check the error in that file."}`
+	secondRequest := `{"request_id":"00000000-0000-4000-8000-000000000002","text":"Check the error in that file.","attachments":[]}`
 	status, first := post(firstRequest)
 	if status != http.StatusAccepted || first.State != "running" || len(first.Attachments) != 1 || len(first.Attachments[0].Data) != 0 {
 		t.Fatalf("invalid file-only turn: %d %+v", status, first)
