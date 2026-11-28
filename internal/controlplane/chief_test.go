@@ -4,6 +4,8 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -33,17 +35,18 @@ func TestChiefConversationPersistsAndReusesContext(t *testing.T) {
 	seen := make(chan input, 2)
 	release := make(chan struct{}, 2)
 	defer close(release)
-	talk := func(ctx context.Context, history []store.ChatTurn, current store.ChatTurn) (string, error) {
+	talk := func(ctx context.Context, history []store.ChatTurn, current store.ChatTurn) (store.ChiefAnswer, error) {
 		seen <- input{history, current}
 		select {
 		case <-release:
-			return "Tell me what to check.", nil
+			return store.ChiefAnswer{Reply: "Tell me what to check.", Goal: current.Text}, nil
 		case <-ctx.Done():
-			return "", ctx.Err()
+			return store.ChiefAnswer{}, ctx.Err()
 		}
 	}
 	tasks := store.Tasks{DB: db}
-	registerChief(router, tasks, talk)
+	projects := []store.SpecialistProject{{ID: "fixture", Name: "Fixture Project", Binding: "binding", ExecutionBinding: "bound-command"}}
+	registerChief(router, tasks, projects, talk)
 	call := func(method, body string) *httptest.ResponseRecorder {
 		request := httptest.NewRequest(method, "/chief/conversation", strings.NewReader(body))
 		request.Header.Set("Content-Type", "application/json")
@@ -105,7 +108,7 @@ func TestChiefConversationPersistsAndReusesContext(t *testing.T) {
 	}
 	// A freshly registered handler sees the same conversation and reuses it.
 	router = http.NewServeMux()
-	registerChief(router, tasks, talk)
+	registerChief(router, tasks, projects, talk)
 	status, second := post(secondRequest)
 	if status != http.StatusAccepted {
 		t.Fatalf("follow-up returned %d", status)
@@ -116,5 +119,42 @@ func TestChiefConversationPersistsAndReusesContext(t *testing.T) {
 		t.Fatalf("follow-up lost context: %+v", got)
 	}
 	release <- struct{}{}
-	waitFor(second.ID)
+	confirmed := waitFor(second.ID)
+	if confirmed.Proposal != "Check the error in that file." {
+		t.Fatalf("coding proposal not persisted: %+v", confirmed)
+	}
+	callProject := func(project string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(http.MethodPost, fmt.Sprintf("/chief/conversation/%d/project", second.ID),
+			strings.NewReader(`{"project_id":"`+project+`"}`))
+		req.Header.Set("Content-Type", "application/json")
+		rec := httptest.NewRecorder()
+		router.ServeHTTP(rec, req)
+		return rec
+	}
+	if response := callProject("unregistered"); response.Code != http.StatusBadRequest {
+		t.Fatalf("unregistered project returned %d", response.Code)
+	}
+	var job store.Task
+	for range 2 {
+		response := callProject("fixture")
+		var saved store.Task
+		if response.Code != http.StatusAccepted || json.Unmarshal(response.Body.Bytes(), &saved) != nil ||
+			saved.ChiefProject == nil || saved.ChiefProject.ID != "fixture" || (job.ID != 0 && job.ID != saved.ID) {
+			t.Fatalf("invalid or duplicate approval: %s", response.Body)
+		}
+		job = saved
+	}
+	if _, err := tasks.ClaimCodex(t.Context(), 0, job.ID); !errors.Is(err, sql.ErrNoRows) {
+		t.Fatalf("unbound claim returned %v", err)
+	}
+	stale := projects[0]
+	stale.ExecutionBinding += "-changed"
+	if _, err := tasks.ClaimChiefProject(t.Context(), stale); !errors.Is(err, sql.ErrNoRows) {
+		t.Fatalf("changed project config claimed existing work: %v", err)
+	}
+	claimed, err := tasks.ClaimChiefProject(t.Context(), projects[0])
+	if err != nil || claimed.ID != job.ID || len(claimed.Attachments) != 1 ||
+		string(claimed.Attachments[0].Data) != "fixture" {
+		t.Fatalf("project claim did not preserve scope and files: %+v, %v", claimed, err)
+	}
 }

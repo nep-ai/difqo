@@ -34,6 +34,9 @@ flowchart LR
     Browser -->|"Send a message or file to Chief of Staff"| Server
     Server -->|"Persist the conversation and one active turn lease"| Postgres
     Server -->|"Run a conversation turn with no project checkout"| ChiefRuntime["Isolated Chief of Staff Codex turn"]
+    Browser -->|"Confirm a coding goal and eligible project"| Server
+    Server -->|"Pin project binding and saved decision in the coding queue"| Postgres
+    LaunchAgent -->|"Run a bounded local coding queue for confirmed goals"| Worker
     Browser -->|"Sign in with ChatGPT, link Slack, or connect and sync GitHub"| Server
     Server -->|"Run the installed Mac setup and sample commands"| WorkerHelper["Packaged Mac worker helper"]
     WorkerHelper -->|"Build the image and use the Codex device sign-in"| Runtime

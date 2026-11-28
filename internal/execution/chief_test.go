@@ -17,7 +17,7 @@ func TestCodexConversationCapturesReplyFromCurrentTurn(t *testing.T) {
 {"method":"turn/completed","params":{"threadId":"fixture-thread","turn":{"id":"fixture-turn","status":"completed"}}}
 `)
 	var reply string
-	if err := runCodexTurn(io.Discard, replies, "", nil, chiefInstructions, &reply); err != nil {
+	if err := runCodexTurn(io.Discard, replies, "", nil, chiefInstructions, &reply, nil); err != nil {
 		t.Fatal(err)
 	}
 	if reply != "What should I do with this screenshot?" {

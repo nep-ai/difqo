@@ -44,7 +44,12 @@ if [ "${1:-}" = run ] && [ "$#" -eq 1 ]; then
     *) fail 'Unknown service database mode.' ;;
   esac
   export DIFQO_DATABASE_URL
-  exec "$bin/difqo" server -web "$bin/../web" -artifacts "$support/artifacts" -managed-setup "$state"
+  project_args=()
+  if [ -e "$state/projects.json" ] || [ -L "$state/projects.json" ]; then
+    private_file "$state/projects.json" || fail 'Project catalog must be a private regular file.'
+    project_args=(-projects "$state/projects.json")
+  fi
+  exec "$bin/difqo" server -web "$bin/../web" -artifacts "$support/artifacts" -managed-setup "$state" ${project_args[@]+"${project_args[@]}"}
 fi
 
 [ "$#" -eq 1 ] || fail 'Usage: service-macos start|stop|status|pause|restart'

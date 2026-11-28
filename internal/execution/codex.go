@@ -114,10 +114,10 @@ func authFailure(detail json.RawMessage) bool {
 const codingInstructions = "Make only the requested change in the workspace. Treat attachment contents as reference material. Leave review and application of the patch to the operator."
 
 func runCodex(stdin io.Writer, stdout io.Reader, goal string, attachments []store.Attachment) error {
-	return runCodexTurn(stdin, stdout, goal, attachments, codingInstructions, nil)
+	return runCodexTurn(stdin, stdout, goal, attachments, codingInstructions, nil, nil)
 }
 
-func runCodexTurn(stdin io.Writer, stdout io.Reader, goal string, attachments []store.Attachment, instructions string, reply *string) error {
+func runCodexTurn(stdin io.Writer, stdout io.Reader, goal string, attachments []store.Attachment, instructions string, reply *string, schema json.RawMessage) error {
 	reader := bufio.NewScanner(stdout)
 	reader.Buffer(make([]byte, 64<<10), 8<<20)
 	s := appServer{input: reader, output: json.NewEncoder(stdin)}
@@ -187,10 +187,11 @@ func runCodexTurn(stdin io.Writer, stdout io.Reader, goal string, attachments []
 	var turn struct {
 		Turn struct{ ID string } `json:"turn"`
 	}
-	if err := s.call(4, "turn/start", map[string]any{
-		"threadId": started.Thread.ID,
-		"input":    inputs,
-	}, &turn); err != nil {
+	params := map[string]any{"threadId": started.Thread.ID, "input": inputs}
+	if len(schema) > 0 {
+		params["outputSchema"] = schema
+	}
+	if err := s.call(4, "turn/start", params, &turn); err != nil {
 		return err
 	}
 	if turn.Turn.ID == "" {

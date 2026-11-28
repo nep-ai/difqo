@@ -12,6 +12,11 @@ const ChatLease = 3 * time.Minute
 
 var ErrChatBusy = errors.New("Chief of Staff is still responding")
 
+type ChiefAnswer struct {
+	Reply string `json:"reply"`
+	Goal  string `json:"proposed_goal"`
+}
+
 type ChatTurn struct {
 	ID          int64        `json:"id,omitempty"`
 	CreatedAt   time.Time    `json:"created_at"`
@@ -19,18 +24,21 @@ type ChatTurn struct {
 	Attachments []Attachment `json:"attachments,omitempty"`
 	State       string       `json:"state,omitempty"`
 	Reply       string       `json:"reply,omitempty"`
+	Proposal    string       `json:"proposed_goal,omitempty"`
+	JobID       int64        `json:"job_id,omitempty"`
 	Problem     string       `json:"problem,omitempty"`
 }
 
 const chatView = `id, message, created_at, attachment_metadata,
 	CASE WHEN state = 'running' AND expires_at <= clock_timestamp() THEN 'attention' ELSE state END,
 	reply, CASE WHEN state = 'running' AND expires_at <= clock_timestamp()
-	THEN 'The local conversation was interrupted. You can send the message again.' ELSE problem END`
+	THEN 'The local conversation was interrupted. You can send the message again.' ELSE problem END, COALESCE(proposed_goal, ''),
+	COALESCE((SELECT task_id FROM chief_project_jobs WHERE turn_id = chief_conversation_turns.id), 0)`
 
 func scanChat(row interface{ Scan(...any) error }) (ChatTurn, error) {
 	var turn ChatTurn
 	var raw []byte
-	err := row.Scan(&turn.ID, &turn.Text, &turn.CreatedAt, &raw, &turn.State, &turn.Reply, &turn.Problem)
+	err := row.Scan(&turn.ID, &turn.Text, &turn.CreatedAt, &raw, &turn.State, &turn.Reply, &turn.Problem, &turn.Proposal, &turn.JobID)
 	if err == nil && len(raw) > 0 {
 		err = json.Unmarshal(raw, &turn.Attachments)
 	}
@@ -105,13 +113,13 @@ func (s Tasks) StartChiefTurn(ctx context.Context, requestID string, message Cha
 	return saved, true, tx.Commit()
 }
 
-func (s Tasks) FinishChiefTurn(ctx context.Context, id int64, reply, problem string) error {
+func (s Tasks) FinishChiefTurn(ctx context.Context, id int64, reply, problem, goal string) error {
 	state := "completed"
 	if problem != "" {
 		state = "attention"
 	}
-	_, err := s.DB.ExecContext(ctx, `UPDATE chief_conversation_turns SET state = $2, reply = $3, problem = $4
-		WHERE id = $1 AND state = 'running' AND expires_at > clock_timestamp()`, id, state, reply, problem)
+	_, err := s.DB.ExecContext(ctx, `UPDATE chief_conversation_turns SET state = $2, reply = $3, problem = $4, proposed_goal = NULLIF($5, '')
+		WHERE id = $1 AND state = 'running' AND expires_at > clock_timestamp()`, id, state, reply, problem, goal)
 	return err
 }
 

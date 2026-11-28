@@ -52,31 +52,38 @@ func Run(ctx context.Context, address string, repo string, executionOptions *exe
 	} else if executionOptions == nil {
 		result = checkHead(ctx, repo)
 	} else {
-		runCtx, cancel := context.WithTimeout(ctx, 210*time.Second)
-		defer cancel()
-		heartbeat := make(chan error, 1)
-		go func() {
-			err := renewLease(runCtx, client, attemptURL)
-			heartbeat <- err
-			if err != nil {
-				cancel()
-			}
-		}()
-		result = executionOptions.Run(runCtx, repo, task)
-		if errors.Is(runCtx.Err(), context.DeadlineExceeded) {
-			result.ExitCode = 124
-			result.Output = "Codex execution exceeded the host deadline"
-			result.Blocked = false
-		}
-		cancel()
-		if err := <-heartbeat; err != nil {
+		result, err = runCodexTask(ctx, repo, task, *executionOptions, func(ctx context.Context) error {
+			return request(ctx, client, "POST", attemptURL+"/renew", struct{}{}, nil)
+		})
+		if err != nil {
 			return err
 		}
 	}
 	return request(ctx, client, "PUT", attemptURL+"/result", result, nil)
 }
 
-func renewLease(ctx context.Context, client *http.Client, attemptURL string) error {
+func runCodexTask(ctx context.Context, repo string, task store.Task, options execution.Options, renew func(context.Context) error) (store.Result, error) {
+	runCtx, cancel := context.WithTimeout(ctx, 210*time.Second)
+	defer cancel()
+	heartbeat := make(chan error, 1)
+	go func() {
+		err := renewLease(runCtx, renew)
+		heartbeat <- err
+		if err != nil {
+			cancel()
+		}
+	}()
+	result := options.Run(runCtx, repo, task)
+	if errors.Is(runCtx.Err(), context.DeadlineExceeded) {
+		result.ExitCode = 124
+		result.Output = "Codex execution exceeded the host deadline"
+		result.Blocked = false
+	}
+	cancel()
+	return result, <-heartbeat
+}
+
+func renewLease(ctx context.Context, renew func(context.Context) error) error {
 	ticker := time.NewTicker(8 * time.Second)
 	defer ticker.Stop()
 	for {
@@ -84,7 +91,7 @@ func renewLease(ctx context.Context, client *http.Client, attemptURL string) err
 		case <-ctx.Done():
 			return nil
 		case <-ticker.C:
-			if err := request(ctx, client, "POST", attemptURL+"/renew", struct{}{}, nil); err != nil && ctx.Err() == nil {
+			if err := renew(ctx); err != nil && ctx.Err() == nil {
 				return err
 			}
 		}

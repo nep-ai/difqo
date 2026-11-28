@@ -57,9 +57,15 @@ and the next turn reuses those files when it has no attachments of its own.
 
 Replaying bounded local history keeps recovery independent of Codex
 container lifetime and leaves coding workspaces and provider sessions
-isolated. The first slice preserves existing coding goals under Project
-tools; project routing, automatic specialist dispatch, and Slack
-conversation replies still use their separate implementation steps.
+isolated. Existing coding goals remain available under Project tools.
+When a conversation turn proposes a coding goal, the operator chooses a
+registered project before dispatch. The local service pins the project ID,
+checkout binding, configured check and saved decision, then runs the queued
+job with the existing lease, sandbox and patch review. The installed service
+reads its project catalog from its private state directory. Coding and
+conversation turns share the installation's Codex sign-in and serialize access
+to that credential directory. Independent review and Slack conversation
+replies still use their separate implementation steps.
 
 
 ### Discoverable Slack actions

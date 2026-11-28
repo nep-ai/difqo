@@ -14,14 +14,15 @@ const (
 )
 
 type Task struct {
-	ID          int64          `json:"id"`
-	CreatedAt   time.Time      `json:"created_at"`
-	Goal        string         `json:"goal"`
-	Status      string         `json:"status"`
-	Decision    *Decision      `json:"decision,omitempty"`
-	Run         *SpecialistRun `json:"specialist_run,omitempty"`
-	Attempt     *Attempt       `json:"attempt,omitempty"`
-	Attachments []Attachment   `json:"attachments,omitempty"`
+	ID           int64              `json:"id"`
+	CreatedAt    time.Time          `json:"created_at"`
+	Goal         string             `json:"goal"`
+	Status       string             `json:"status"`
+	Decision     *Decision          `json:"decision,omitempty"`
+	ChiefProject *SpecialistProject `json:"chief_project,omitempty"`
+	Run          *SpecialistRun     `json:"specialist_run,omitempty"`
+	Attempt      *Attempt           `json:"attempt,omitempty"`
+	Attachments  []Attachment       `json:"attachments,omitempty"`
 }
 
 type Attachment struct {
@@ -110,7 +111,7 @@ const taskQuery = `
 				ELSE 'queued'
 			END,
 			a.id, a.attempt_number, a.lease_expires_at, a.completed_at, a.exit_code, a.output, a.blocked, a.artifacts, a.snapshot, d.id, d.body, ` + runMetadata + `,
-			t.attachment_metadata
+			t.attachment_metadata, (SELECT project FROM chief_project_jobs WHERE task_id = t.id)
 		FROM tasks t LEFT JOIN project_decisions d ON d.id = t.decision_id LEFT JOIN LATERAL (
 			SELECT id, attempt_number, lease_expires_at, completed_at, exit_code, output, blocked, artifacts, snapshot
 			FROM attempts WHERE task_id = t.id ORDER BY attempt_number DESC LIMIT 1
@@ -149,10 +150,10 @@ func scanTask(row interface{ Scan(...any) error }) (Task, error) {
 	var artifacts *string
 	var decisionID *int64
 	var decisionBody *string
-	var snapshot, run, attachments []byte
+	var snapshot, run, attachments, chiefProject []byte
 	err := row.Scan(
 		&task.ID, &task.Goal, &task.CreatedAt, &task.Status, &attemptID, &number, &leaseExpiresAt,
-		&attempt.CompletedAt, &exitCode, &output, &blocked, &artifacts, &snapshot, &decisionID, &decisionBody, &run, &attachments)
+		&attempt.CompletedAt, &exitCode, &output, &blocked, &artifacts, &snapshot, &decisionID, &decisionBody, &run, &attachments, &chiefProject)
 	if err == nil && decisionID != nil {
 		task.Decision = &Decision{ID: *decisionID, Body: *decisionBody}
 	}
@@ -174,35 +175,62 @@ func scanTask(row interface{ Scan(...any) error }) (Task, error) {
 	if err == nil && attachments != nil {
 		err = json.Unmarshal(attachments, &task.Attachments)
 	}
+	if err == nil && chiefProject != nil {
+		err = json.Unmarshal(chiefProject, &task.ChiefProject)
+	}
 	return task, err
 }
 
 func (s Tasks) Claim(ctx context.Context, githubRepositoryID int64) (Task, error) {
-	return s.claimFor(ctx, githubRepositoryID, SpecialistProject{}, 0, false)
+	return s.claimFor(ctx, githubRepositoryID, SpecialistProject{}, 0, false, "")
 }
 
 func (s Tasks) ClaimLocalTask(ctx context.Context, id int64) (Task, error) {
-	return s.claimFor(ctx, 0, SpecialistProject{}, id, false)
+	return s.claimFor(ctx, 0, SpecialistProject{}, id, false, "")
 }
 
 func (s Tasks) ClaimProject(ctx context.Context, project SpecialistProject) (Task, error) {
-	return s.claimFor(ctx, 0, project, 0, false)
+	return s.claimFor(ctx, 0, project, 0, false, "")
 }
 
 func (s Tasks) ClaimCodex(ctx context.Context, githubRepositoryID, id int64) (Task, error) {
-	return s.claimFor(ctx, githubRepositoryID, SpecialistProject{}, id, true)
+	return s.claimFor(ctx, githubRepositoryID, SpecialistProject{}, id, true, "")
 }
 
-func (s Tasks) claimFor(ctx context.Context, githubRepositoryID int64, project SpecialistProject, id int64, attachmentSupport bool) (Task, error) {
+func (s Tasks) ClaimChiefProject(ctx context.Context, project SpecialistProject) (Task, error) {
+	if project.ExecutionBinding == "" {
+		return Task{}, ErrChiefProjectConflict
+	}
+	return s.claimFor(ctx, 0, SpecialistProject{}, 0, true, project.ExecutionBinding)
+}
+
+func (s Tasks) HasQueuedChiefProject(ctx context.Context, project SpecialistProject) (bool, error) {
+	var queued bool
+	err := s.DB.QueryRowContext(ctx, `
+		SELECT EXISTS (
+			SELECT FROM chief_project_jobs j
+			LEFT JOIN LATERAL (
+				SELECT attempt_number, completed_at, lease_expires_at
+				FROM attempts WHERE task_id = j.task_id ORDER BY attempt_number DESC LIMIT 1
+			) a ON true
+			WHERE j.project->>'execution_binding' = $1 AND (
+				a.attempt_number IS NULL OR (a.completed_at IS NULL AND
+					a.lease_expires_at <= statement_timestamp() AND a.attempt_number < $2)
+			)
+		)`, project.ExecutionBinding, maxAttempts).Scan(&queued)
+	return queued, err
+}
+
+func (s Tasks) claimFor(ctx context.Context, githubRepositoryID int64, project SpecialistProject, id int64, attachmentSupport bool, executionBinding string) (Task, error) {
 	for {
-		task, retry, err := s.claim(ctx, githubRepositoryID, project, id, attachmentSupport)
+		task, retry, err := s.claim(ctx, githubRepositoryID, project, id, attachmentSupport, executionBinding)
 		if !retry {
 			return task, err
 		}
 	}
 }
 
-func (s Tasks) claim(ctx context.Context, githubRepositoryID int64, project SpecialistProject, id int64, attachmentSupport bool) (Task, bool, error) {
+func (s Tasks) claim(ctx context.Context, githubRepositoryID int64, project SpecialistProject, id int64, attachmentSupport bool, executionBinding string) (Task, bool, error) {
 	tx, err := s.DB.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelReadCommitted})
 	if err != nil {
 		return Task{}, false, err
@@ -221,6 +249,7 @@ func (s Tasks) claim(ctx context.Context, githubRepositoryID int64, project Spec
 			FROM attempts WHERE task_id = t.id ORDER BY attempt_number DESC LIMIT 1
 		) a ON true
 		WHERE ($7::bigint = 0 OR t.id = $7)
+		AND COALESCE((SELECT project->>'execution_binding' FROM chief_project_jobs WHERE task_id = t.id), '') = $9
 		AND ($8::boolean OR t.attachment_metadata IS NULL)
 		AND ((sr.task_id IS NULL AND $2 = '' AND COALESCE(g.repository_id, 0) = $6) OR (
 			g.task_id IS NULL AND sr.project->>'id' = $2 AND sr.project->>'binding' = $3
@@ -238,7 +267,7 @@ func (s Tasks) claim(ctx context.Context, githubRepositoryID int64, project Spec
 			AND a.attempt_number < $1
 		))
 		ORDER BY t.id LIMIT 1 FOR UPDATE OF t SKIP LOCKED`,
-		maxAttempts, project.ID, project.Binding, specialistProfile, specialistAccess, githubRepositoryID, id, attachmentSupport).Scan(&taskID)
+		maxAttempts, project.ID, project.Binding, specialistProfile, specialistAccess, githubRepositoryID, id, attachmentSupport, executionBinding).Scan(&taskID)
 	if err != nil {
 		return Task{}, false, err
 	}

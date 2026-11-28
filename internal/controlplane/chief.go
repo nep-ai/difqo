@@ -17,7 +17,8 @@ import (
 
 var chatRequestID = regexp.MustCompile(`^[a-f0-9-]{36}$`)
 
-func registerChief(router *http.ServeMux, tasks store.Tasks, talk func(context.Context, []store.ChatTurn, store.ChatTurn) (string, error)) {
+func registerChief(router *http.ServeMux, tasks store.Tasks, projects []store.SpecialistProject, talk func(context.Context, []store.ChatTurn, store.ChatTurn) (store.ChiefAnswer, error)) {
+	registerChiefProjects(router, tasks, projects)
 	router.HandleFunc("GET /chief/conversation", func(w http.ResponseWriter, r *http.Request) {
 		turns, err := tasks.ChiefTurns(r.Context())
 		if err != nil {
@@ -64,11 +65,11 @@ func registerChief(router *http.ServeMux, tasks store.Tasks, talk func(context.C
 	})
 }
 
-func finishChief(tasks store.Tasks, talk func(context.Context, []store.ChatTurn, store.ChatTurn) (string, error), id int64, message store.ChatTurn) {
+func finishChief(tasks store.Tasks, talk func(context.Context, []store.ChatTurn, store.ChatTurn) (store.ChiefAnswer, error), id int64, message store.ChatTurn) {
 	ctx, cancel := context.WithTimeout(context.Background(), 150*time.Second)
 	defer cancel()
 
-	reply, err := runChief(ctx, tasks, talk, id, message)
+	answer, err := runChief(ctx, tasks, talk, id, message)
 	problem := ""
 	switch {
 	case errors.Is(err, execution.ErrAuthentication):
@@ -80,15 +81,15 @@ func finishChief(tasks store.Tasks, talk func(context.Context, []store.ChatTurn,
 	}
 	finish, stop := context.WithTimeout(context.Background(), 5*time.Second)
 	defer stop()
-	if err := tasks.FinishChiefTurn(finish, id, reply, problem); err != nil {
+	if err := tasks.FinishChiefTurn(finish, id, answer.Reply, problem, answer.Goal); err != nil {
 		log.Printf("could not record Chief of Staff turn %d (%T)", id, err)
 	}
 }
 
-func runChief(ctx context.Context, tasks store.Tasks, talk func(context.Context, []store.ChatTurn, store.ChatTurn) (string, error), id int64, message store.ChatTurn) (string, error) {
+func runChief(ctx context.Context, tasks store.Tasks, talk func(context.Context, []store.ChatTurn, store.ChatTurn) (store.ChiefAnswer, error), id int64, message store.ChatTurn) (store.ChiefAnswer, error) {
 	turns, err := tasks.ChiefTurns(ctx)
 	if err != nil {
-		return "", err
+		return store.ChiefAnswer{}, err
 	}
 	history := []store.ChatTurn{}
 	const budget = 32 << 10
@@ -107,16 +108,21 @@ func runChief(ctx context.Context, tasks store.Tasks, talk func(context.Context,
 		history[0].Text == "" && len(history[0].Attachments) > 0 {
 		message.Attachments, err = tasks.ChiefAttachments(ctx, history[0].ID)
 		if err != nil {
-			return "", err
+			return store.ChiefAnswer{}, err
 		}
 	}
 	slices.Reverse(history)
-	reply, err := talk(ctx, history, message)
+	answer, err := talk(ctx, history, message)
 	if err != nil {
-		return "", err
+		return store.ChiefAnswer{}, err
 	}
-	if strings.TrimSpace(reply) == "" {
-		return "", errors.New("Chief of Staff did not reply")
+	answer.Reply = strings.TrimSpace(strings.ReplaceAll(answer.Reply, "\x00", ""))
+	if answer.Reply == "" {
+		return store.ChiefAnswer{}, errors.New("Chief of Staff did not reply")
 	}
-	return strings.ReplaceAll(reply, "\x00", ""), nil
+	answer.Goal = strings.TrimSpace(answer.Goal)
+	if strings.ContainsRune(answer.Goal, 0) || utf8.RuneCountInString(answer.Goal) > 4096 {
+		answer.Goal = ""
+	}
+	return answer, nil
 }
