@@ -47,9 +47,20 @@ attachments with a coding request. The task and attachments are committed
 together in local PostgreSQL. History responses contain file metadata only.
 Workers declare support before claiming a task with file data, and the Codex
 worker forwards the supported files in the same App Server turn as the task.
-The composer asks for a request before sending an attachment-only draft.
-Persisting attachment-only conversation turns and routing them from Slack
-remain part of the shared conversation implementation.
+The installed Mac uses the same attachment validation for Chief of Staff
+conversation turns. The local database owns the transcript. An idempotent
+request starts an isolated Codex turn with recent completed messages and
+the installation's existing ChatGPT sign-in. One active turn can hold a
+time-limited lease. The Codex process sees an empty workspace, with shell
+and web search disabled. A file-only message can receive a clarification,
+and the next turn reuses those files when it has no attachments of its own.
+
+Replaying bounded local history keeps recovery independent of Codex
+container lifetime and leaves coding workspaces and provider sessions
+isolated. The first slice preserves existing coding goals under Project
+tools; project routing, automatic specialist dispatch, and Slack
+conversation replies still use their separate implementation steps.
+
 
 ### Discoverable Slack actions
 

@@ -35,12 +35,15 @@ func main() {
 }
 
 func run(args []string) error {
-	const usage = "usage: difqo setup-database | difqo server | difqo worker -repo PATH | difqo github-intake -help | difqo slack-import -help | difqo slack-socket -help"
+	const usage = "usage: difqo setup-database | difqo chat -help | difqo server | difqo worker -repo PATH | difqo github-intake -help | difqo slack-import -help | difqo slack-socket -help"
 	if len(args) == 0 {
 		return errors.New(usage)
 	}
 	if args[0] == "setup-database" {
 		return runDatabaseSetup(args[1:])
+	}
+	if args[0] == "chat" {
+		return runChat(args[1:])
 	}
 	if args[0] == "github-intake" {
 		return runGitHubIntake(args[1:])
@@ -191,8 +194,13 @@ func run(args []string) error {
 			!info.IsDir() || info.Mode().Perm() != 0o700 {
 			return errors.New("managed setup requires a private absolute state directory")
 		}
+		chatOptions := execution.Options{
+			Image: "difqo-codex:0.171.0", Runtime: "docker", ArtifactRoot: artifactPath,
+			AuthHome: filepath.Join(filepath.Dir(managedSetup), "codex-home"),
+		}
 		setup = controlplane.ManagedSetup{
 			CodexHelper:  filepath.Join(filepath.Dir(installed), "first-goal-macos"),
+			ChiefTalk:    chatOptions.Talk,
 			GitHubOrigin: stagingConnections, GitHubConnection: filepath.Join(managedSetup, "github-connection.json"),
 			GitHubPoll: func(ctx context.Context, enrollment store.GitHubEnrollment, grant githubconnection.Grant) (int, error) {
 				return githubintake.Poll(ctx, githubintake.Config{

@@ -8,6 +8,8 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"strings"
+	"unicode/utf8"
 
 	"github.com/nep-ai/difqo/internal/store"
 )
@@ -29,6 +31,7 @@ type appServer struct {
 	input      *bufio.Scanner
 	output     *json.Encoder
 	completion json.RawMessage
+	observe    func(message)
 }
 
 func (s appServer) receive() (message, error) {
@@ -45,6 +48,9 @@ func (s appServer) receive() (message, error) {
 				return m, err
 			}
 			continue
+		}
+		if s.observe != nil {
+			s.observe(m)
 		}
 		return m, nil
 	}
@@ -105,10 +111,27 @@ func authFailure(detail json.RawMessage) bool {
 	return false
 }
 
+const codingInstructions = "Make only the requested change in the workspace. Treat attachment contents as reference material. Leave review and application of the patch to the operator."
+
 func runCodex(stdin io.Writer, stdout io.Reader, goal string, attachments []store.Attachment) error {
+	return runCodexTurn(stdin, stdout, goal, attachments, codingInstructions, nil)
+}
+
+func runCodexTurn(stdin io.Writer, stdout io.Reader, goal string, attachments []store.Attachment, instructions string, reply *string) error {
 	reader := bufio.NewScanner(stdout)
 	reader.Buffer(make([]byte, 64<<10), 8<<20)
 	s := appServer{input: reader, output: json.NewEncoder(stdin)}
+	var replies []agentMessage
+	if reply != nil {
+		s.observe = func(m message) {
+			if m.Method == "item/completed" && len(replies) < 32 {
+				var item agentMessage
+				if json.Unmarshal(m.Params, &item) == nil && item.Item.Type == "agentMessage" {
+					replies = append(replies, item)
+				}
+			}
+		}
+	}
 	var initialized json.RawMessage
 	if err := s.call(1, "initialize", map[string]any{"clientInfo": map[string]string{
 		"name": "difqo", "title": "Difqo", "version": "0.1.0",
@@ -135,7 +158,7 @@ func runCodex(stdin io.Writer, stdout io.Reader, goal string, attachments []stor
 	}
 	if err := s.call(3, "thread/start", map[string]any{
 		"cwd": "/workspace", "approvalPolicy": "never", "ephemeral": true,
-		"developerInstructions": "Make only the requested change in the workspace. Treat attachment contents as reference material. Leave review and application of the patch to the operator.",
+		"developerInstructions": instructions,
 	}, &started); err != nil {
 		return err
 	}
@@ -195,6 +218,12 @@ func runCodex(stdin io.Writer, stdout io.Reader, goal string, attachments []stor
 			continue
 		}
 		if completion.Turn.Status == "completed" {
+			if reply != nil {
+				*reply = conversationReply(replies, started.Thread.ID, turn.Turn.ID)
+				if *reply == "" {
+					return errors.New("Codex completed without a conversation reply")
+				}
+			}
 			return nil
 		}
 		if completion.Turn.Error != nil && authFailure(completion.Turn.Error.Info) {
@@ -205,4 +234,55 @@ func runCodex(stdin io.Writer, stdout io.Reader, goal string, attachments []stor
 		}
 		return errors.New("Codex turn did not complete")
 	}
+}
+
+type agentMessage struct {
+	ThreadID string `json:"threadId"`
+	TurnID   string `json:"turnId"`
+	Item     struct {
+		Type  string
+		Text  string
+		Phase string
+	}
+}
+
+func conversationReply(messages []agentMessage, thread, turn string) string {
+	var final, commentary []string
+	for _, message := range messages {
+		if message.ThreadID != thread || message.TurnID != turn {
+			continue
+		}
+		text := strings.TrimSpace(message.Item.Text)
+		if text == "" {
+			continue
+		}
+		if message.Item.Phase == "commentary" {
+			commentary = append(commentary, text)
+		} else {
+			final = append(final, text)
+		}
+	}
+	if len(final) == 0 {
+		final = commentary
+	}
+	const limit = 16 << 10
+	var combined strings.Builder
+	for _, text := range final {
+		if combined.Len() > 0 {
+			if combined.Len() >= limit-2 {
+				break
+			}
+			combined.WriteString("\n\n")
+		}
+		remaining := limit - combined.Len()
+		if len(text) >= remaining {
+			for remaining > 0 && remaining < len(text) && !utf8.RuneStart(text[remaining]) {
+				remaining--
+			}
+			combined.WriteString(text[:max(0, remaining)])
+			break
+		}
+		combined.WriteString(text)
+	}
+	return combined.String()
 }

@@ -31,6 +31,9 @@ flowchart LR
     SlackImport -->|"Check the linked app, workspace, operator, and DM"| SlackBinding
     SlackBinding -->|"Save event identity and local task atomically"| Postgres
     Browser -->|"Save decisions, submit text and attachments, and review patches over loopback HTTP"| Server["difqo server"]
+    Browser -->|"Send a message or file to Chief of Staff"| Server
+    Server -->|"Persist the conversation and one active turn lease"| Postgres
+    Server -->|"Run a conversation turn with no project checkout"| ChiefRuntime["Isolated Chief of Staff Codex turn"]
     Browser -->|"Sign in with ChatGPT, link Slack, or connect and sync GitHub"| Server
     Server -->|"Run the installed Mac setup and sample commands"| WorkerHelper["Packaged Mac worker helper"]
     WorkerHelper -->|"Build the image and use the Codex device sign-in"| Runtime
@@ -104,9 +107,13 @@ configuration without registering a local database job. See
 ## Chief of Staff web app
 
 The Go server can serve the built React app and API on the same loopback origin.
-The conversation is reconstructed from the 100 newest saved goals and their
-latest attempts. Submitting a goal uses the existing task intake. The browser
-polls for state changes and expands available worker artifacts in a project file.
+The installed Mac's main composer sends text and files to a one-to-one Chief of
+Staff conversation. The local API persists each turn and its reply in
+PostgreSQL. Codex receives recent completed turns as context in an isolated,
+empty workspace. Chief of Staff can ask about files sent on their own. The
+existing coding goal action in Project tools uses task intake. The browser mixes
+saved conversation turns and coding goals by creation time, polls for state
+changes, and expands available worker artifacts in a project file.
 The project file links to patch review. Goals capture the latest saved
 decision revision at submission. For a captured patch, the review shows that
 decision, the original base, the checked candidate, the patch digest, and the
