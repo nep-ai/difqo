@@ -121,14 +121,22 @@ func runCodexTurn(stdin io.Writer, stdout io.Reader, goal string, attachments []
 	reader := bufio.NewScanner(stdout)
 	reader.Buffer(make([]byte, 64<<10), 8<<20)
 	s := appServer{input: reader, output: json.NewEncoder(stdin)}
-	var replies []agentMessage
+	var finalReplies, otherReplies []agentMessage
 	if reply != nil {
 		s.observe = func(m message) {
-			if m.Method == "item/completed" && len(replies) < 32 {
-				var item agentMessage
-				if json.Unmarshal(m.Params, &item) == nil && item.Item.Type == "agentMessage" {
-					replies = append(replies, item)
+			if m.Method != "item/completed" {
+				return
+			}
+			var item agentMessage
+			if json.Unmarshal(m.Params, &item) != nil || item.Item.Type != "agentMessage" {
+				return
+			}
+			if item.Item.Phase == "final_answer" {
+				if len(finalReplies) < 32 {
+					finalReplies = append(finalReplies, item)
 				}
+			} else if len(otherReplies) < 32 {
+				otherReplies = append(otherReplies, item)
 			}
 		}
 	}
@@ -219,7 +227,10 @@ func runCodexTurn(stdin io.Writer, stdout io.Reader, goal string, attachments []
 		}
 		if completion.Turn.Status == "completed" {
 			if reply != nil {
-				*reply = conversationReply(replies, started.Thread.ID, turn.Turn.ID)
+				*reply = conversationReply(finalReplies, started.Thread.ID, turn.Turn.ID)
+				if *reply == "" {
+					*reply = conversationReply(otherReplies, started.Thread.ID, turn.Turn.ID)
+				}
 				if *reply == "" {
 					return errors.New("Codex completed without a conversation reply")
 				}
