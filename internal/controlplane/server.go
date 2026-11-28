@@ -34,6 +34,7 @@ type ManagedSetup struct {
 	GitHubConnection  string
 	GitHubPoll        func(context.Context, store.GitHubEnrollment, githubconnection.Grant) (int, error)
 	SlackRequiresCode bool
+	SlackPlainText    bool
 }
 
 func Handler(tasks store.Tasks, web fs.FS, artifacts *os.Root, runtimeChoice string, projects []store.SpecialistProject, slack *slackintake.Connections, setup ManagedSetup) http.Handler {
@@ -43,7 +44,7 @@ func Handler(tasks store.Tasks, web fs.FS, artifacts *os.Root, runtimeChoice str
 	registerRuns(router, tasks, specialists)
 	registerDecisions(router, tasks, specialists)
 	if slack != nil {
-		registerSlackConnection(router, slack, setup.SlackRequiresCode)
+		registerSlackConnection(router, slack, setup.SlackRequiresCode, setup.SlackPlainText)
 	}
 
 	if setup.CodexHelper != "" {

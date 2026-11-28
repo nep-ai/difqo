@@ -8,10 +8,12 @@ import (
 	"github.com/nep-ai/difqo/internal/store"
 )
 
-func registerSlackConnection(router *http.ServeMux, connections *slackintake.Connections, requiresCode bool) {
+func registerSlackConnection(router *http.ServeMux, connections *slackintake.Connections, requiresCode, plainText bool) {
 	respond := func(w http.ResponseWriter, view slackintake.ConnectionView, err error) {
 		w.Header().Set("Cache-Control", "no-store")
 		w.Header().Set("Referrer-Policy", "no-referrer")
+		view.RequiresCode = requiresCode
+		view.PlainText = plainText && view.Mode == "official"
 		switch {
 		case errors.Is(err, slackintake.ErrEnrollmentCode):
 			http.Error(w, err.Error(), http.StatusBadRequest)
@@ -27,7 +29,6 @@ func registerSlackConnection(router *http.ServeMux, connections *slackintake.Con
 	}
 	router.HandleFunc("GET /slack/connection", func(w http.ResponseWriter, r *http.Request) {
 		view, err := connections.Status(r.Context())
-		view.RequiresCode = requiresCode
 		respond(w, view, err)
 	})
 	router.HandleFunc("POST /slack/connection", func(w http.ResponseWriter, r *http.Request) {
@@ -68,7 +69,6 @@ func registerSlackConnection(router *http.ServeMux, connections *slackintake.Con
 			http.Error(w, "unknown Slack connection action", http.StatusBadRequest)
 			return
 		}
-		view.RequiresCode = requiresCode
 		respond(w, view, err)
 	})
 }

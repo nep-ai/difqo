@@ -25,6 +25,7 @@ type Connections struct {
 }
 
 type ConnectionView struct {
+	PlainText    bool                `json:"plain_text,omitempty"`
 	RequiresCode bool                `json:"requires_code,omitempty"`
 	Mode         string              `json:"mode"`
 	Generation   int64               `json:"generation"`
