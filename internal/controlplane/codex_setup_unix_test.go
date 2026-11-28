@@ -6,8 +6,11 @@ import (
 	"context"
 	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -21,11 +24,8 @@ if [ "$1" = cleanup-login ]; then
   : > cleaned
   exit
 fi
-(
-  : > started
-  sleep 0.6
-  : > survived
-) </dev/null >/dev/null 2>&1 &
+sleep 60 </dev/null >/dev/null 2>&1 &
+printf '%s\n' "$!" > child
 wait
 `), 0o600); err != nil {
 		t.Fatal(err)
@@ -38,9 +38,13 @@ wait
 		defer close(done)
 		setup.runHelper(ctx, helper, "prepare", 0)
 	}()
+	var pid int
 	for deadline := time.Now().Add(3 * time.Second); ; time.Sleep(10 * time.Millisecond) {
-		if _, err := os.Stat(filepath.Join(dir, "started")); err == nil {
-			break
+		if raw, err := os.ReadFile(filepath.Join(dir, "child")); err == nil {
+			if parsed, err := strconv.Atoi(strings.TrimSpace(string(raw))); err == nil && parsed > 0 {
+				pid = parsed
+				break
+			}
 		}
 		if time.Now().After(deadline) {
 			t.Fatal("the helper did not start its child")
@@ -58,8 +62,18 @@ wait
 	if setup.view.State != "attention" || !strings.Contains(setup.view.Message, "timed out") {
 		t.Fatalf("unexpected timeout status: %+v", setup.view)
 	}
-	time.Sleep(650 * time.Millisecond)
-	if _, err := os.Stat(filepath.Join(dir, "survived")); !errors.Is(err, os.ErrNotExist) {
-		t.Fatal("a child kept running after setup timed out")
+	for deadline := time.Now().Add(3 * time.Second); ; time.Sleep(10 * time.Millisecond) {
+		if err := syscall.Kill(pid, 0); errors.Is(err, syscall.ESRCH) {
+			break
+		}
+		// A killed orphan can remain visible until its new parent reaps it.
+		status, _ := exec.Command("ps", "-o", "stat=", "-p", strconv.Itoa(pid)).Output()
+		if strings.HasPrefix(strings.TrimSpace(string(status)), "Z") {
+			break
+		}
+		if time.Now().After(deadline) {
+			_ = syscall.Kill(pid, syscall.SIGKILL)
+			t.Fatalf("child %d kept running after setup timed out", pid)
+		}
 	}
 }

@@ -203,12 +203,17 @@ func run(args []string) error {
 		if slackRelay == "" && slackFixture == "" {
 			slackRelay = stagingConnections
 		}
-		setup.SlackRequiresCode = slackRelay == stagingConnections && os.Getenv("DIFQO_SLACK_ENROLLMENT_TOKEN") == ""
 	}
 	var slack *slackintake.Connections
 	switch {
 	case slackRelay != "":
-		slack, err = slackintake.NewPilotConnections(tasks, slackRelay, os.Getenv("DIFQO_SLACK_ENROLLMENT_TOKEN"))
+		origin, originErr := slackintake.HTTPSRelayOrigin(slackRelay)
+		if originErr != nil {
+			return originErr
+		}
+		token := os.Getenv("DIFQO_SLACK_ENROLLMENT_TOKEN")
+		setup.SlackRequiresCode = managedSetup != "" && origin == stagingConnections && token == ""
+		slack, err = slackintake.NewPilotConnections(tasks, origin, token)
 	case slackFixture != "":
 		slack, err = slackintake.NewFixtureConnections(tasks, slackFixture)
 	}
