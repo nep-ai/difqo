@@ -174,7 +174,10 @@ The Slack provider module of the planned Connections service accepts signed
 events at `POST /slack/events`. It verifies the v0 signature over at most
 64 KiB of raw body and accepts timestamps within five minutes. A verified
 URL challenge returns plaintext before the queue is consulted. Message
-normalization shares the private connector's Slack DM and goal rules.
+normalization shares the private connector's Slack DM validation and goal limits.
+The hosted pilot accepts ordinary text as a queued goal in the linked DM;
+existing `goal ` messages still work. Private Socket Mode and the offline
+import harness require the explicit prefix.
 
 The local client in the fixture claims the exact displayed binding through
 a proof-authenticated `POST /pairings/{id}/claim`. The claim is idempotent

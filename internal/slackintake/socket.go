@@ -42,7 +42,7 @@ func socketGoal(binding store.SlackBinding, payload json.RawMessage) (eventID, g
 	if json.Unmarshal(payload, &callback) != nil {
 		return "", ""
 	}
-	source, goal := callback.Goal()
+	source, goal := callback.Goal(true)
 	if source != binding {
 		return "", ""
 	}

@@ -57,10 +57,10 @@ func authorizedGoal(binding store.SlackBinding, incoming event) (string, error) 
 	if incoming.SlackBinding != binding {
 		return "", errors.New("event is outside the linked operator's private DM")
 	}
-	return incoming.goal()
+	return incoming.goal(true)
 }
 
-func (incoming event) goal() (string, error) {
+func (incoming event) goal(requirePrefix bool) (string, error) {
 	if incoming.Type != "message" || incoming.ChannelType != "im" ||
 		incoming.Bot == nil || *incoming.Bot || incoming.Subtype != "" {
 		return "", errors.New("event is outside the linked operator's private DM")
@@ -70,8 +70,11 @@ func (incoming event) goal() (string, error) {
 	}
 	goal, ok := strings.CutPrefix(strings.TrimSpace(incoming.Text), "goal ")
 	goal = strings.TrimSpace(goal)
-	if !ok || !validGoal(goal) {
-		return "", errors.New("use goal followed by a task of up to 4096 characters")
+	if requirePrefix && !ok {
+		return "", errors.New("use goal followed by a task")
+	}
+	if !validGoal(goal) {
+		return "", errors.New("enter a task of 1 to 4096 characters without NUL")
 	}
 	return goal, nil
 }

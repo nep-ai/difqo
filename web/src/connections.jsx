@@ -181,7 +181,7 @@ function Slack({ request, open }) {
     {((activePair && (view.verified_operator || enrolledPairing === view.pairing_id)) ||
       ['ready_to_link', 'connected', 'claim_rejected', 'reconnecting'].includes(state)) &&
       <button className="subtle connection-secondary" disabled={busy} onClick={() => perform('disconnect')}>Disconnect Slack</button>}
-    {state === 'connected' && <p>In the pilot DM, start a message with <code>goal </code> to submit work. The task appears in this conversation.</p>}
+    {state === 'connected' && <p>Send a coding goal as plain text in the linked pilot DM. The queued goal appears in this conversation.</p>}
   </ConnectionCard>
 }
 
