@@ -21,6 +21,22 @@ type GitHubTask struct {
 	Goal         string
 }
 
+// GitHubEnrollmentStart reuses a local cursor's enrollment when connecting through a new UI or credential.
+func (s Tasks) GitHubEnrollmentStart(ctx context.Context, repositoryID, ownerID int64, fallback time.Time) (time.Time, error) {
+	var savedOwner int64
+	var start time.Time
+	err := s.DB.QueryRowContext(ctx, `
+		SELECT owner_id, enrolled_at FROM github_intake_cursors WHERE repository_id = $1
+	`, repositoryID).Scan(&savedOwner, &start)
+	if errors.Is(err, sql.ErrNoRows) {
+		return fallback, nil
+	}
+	if err == nil && savedOwner != ownerID {
+		return time.Time{}, ErrGitHubEnrollment
+	}
+	return start, err
+}
+
 func (s Tasks) GitHubCursor(ctx context.Context, enrollment GitHubEnrollment) (time.Time, error) {
 	var owner int64
 	var start, through time.Time

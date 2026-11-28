@@ -30,7 +30,7 @@ func NewPilotConnections(tasks store.Tasks, origin, token string) (*Connections,
 	return c, nil
 }
 
-func (c *Connections) enroll(ctx context.Context, p *store.SlackPairing) error {
+func (c *Connections) enroll(ctx context.Context, p *store.SlackPairing, token string) error {
 	if p.Relay != c.origin || !pairingIDPattern.MatchString(p.ID) || !oauthState.MatchString(p.Proof) {
 		return store.ErrSlackTransition
 	}
@@ -38,7 +38,7 @@ func (c *Connections) enroll(ctx context.Context, p *store.SlackPairing) error {
 	if err != nil {
 		return err
 	}
-	res, err := c.request(ctx, http.MethodPost, "/slack/enroll", c.enrollmentToken, bytes.NewReader(body))
+	res, err := c.request(ctx, http.MethodPost, "/slack/enroll", token, bytes.NewReader(body))
 	if err != nil {
 		return err
 	}
@@ -66,7 +66,7 @@ func (c *Connections) revoke(ctx context.Context, p *store.SlackPairing) error {
 	if res.StatusCode == http.StatusUnauthorized && c.enrollmentToken != "" && !p.RelayClaimed {
 		// Begin may have failed before the relay registered the pairing.
 		// Establish the same proof so DELETE can leave a durable tombstone.
-		if err := c.enroll(ctx, p); err != nil {
+		if err := c.enroll(ctx, p, c.enrollmentToken); err != nil {
 			return err
 		}
 		return c.relayChange(ctx, http.MethodDelete, p, "", nil)

@@ -3,6 +3,7 @@ import { createRoot } from 'react-dom/client'
 import '@fontsource-variable/geist/wght.css'
 import '@fontsource/barlow-condensed/latin-600.css'
 import { Specialists } from './specialists.jsx'
+import { Connections, RunSample } from './connections.jsx'
 import './style.css'
 
 const api = import.meta.env.DEV ? '/api' : ''
@@ -326,7 +327,7 @@ function AttemptHistory({ goal }) {
   </details>
 }
 
-function ProjectFile({ goal }) {
+function ProjectFile({ goal, openSetup }) {
   const result = goal.attempt?.result
   const completed = goal.status === 'completed'
   const failed = completed && result?.exit_code !== 0
@@ -342,9 +343,10 @@ function ProjectFile({ goal }) {
     {goal.status === 'queued' && <p>{goal.specialist_run ? 'Waiting for a worker bound to this project.' : 'Goal saved. Work starts when a local worker claims it.'}</p>}
     {mac && goal.status === 'queued' && goal.goal === sampleGoal && !goal.specialist_run &&
       Number.isSafeInteger(goal.id) && goal.id > 0 &&
-      <div><p>Run this sample goal in a disposable repository from Terminal.</p>
+      <RunSample id={goal.id} request={request} openSetup={openSetup} fallback={<div>
+        <p>Run this sample goal in a disposable repository from Terminal.</p>
         <pre className="worker-command">{macWorkerCommand('run ' + goal.id)}</pre>
-      </div>}
+      </div>} />}
     {goal.status === 'claimed' && <p>The local worker is running this goal.</p>}
     {goal.status === 'blocked' && <p>Restore Codex sign-in in the worker’s execution environment, then submit the goal again.</p>}
     {goal.status === 'exhausted' && <p>Check that a local worker is available before submitting this goal again.</p>}
@@ -363,7 +365,7 @@ function ProjectFile({ goal }) {
   </section>
 }
 
-function Chat({ goals, connection, submit, addTask }) {
+function Chat({ goals, connection, submit, addTask, setupDialog, setupOpen, openSetup, closeSetup }) {
   const [draft, setDraft] = useState('')
   const [showSpecialists, setShowSpecialists] = useState(false)
   const specialistTrigger = useRef(null)
@@ -371,7 +373,6 @@ function Chat({ goals, connection, submit, addTask }) {
   const [error, setError] = useState('')
   const composer = useRef(null)
   const decisionDialog = useRef(null)
-  const setupDialog = useRef(null)
   const end = useRef(null)
   const submitted = useRef(false)
   const openedHistory = useRef(false)
@@ -412,7 +413,7 @@ function Chat({ goals, connection, submit, addTask }) {
       {goals.map(goal => <React.Fragment key={goal.id}>
         <article className="turn user" aria-label="You"><div className="turn-content"><p>{goal.goal}</p></div></article>
         <article className="turn chief" aria-label="Chief of Staff"><Mark /><div className="turn-content">
-          <strong className="speaker">Chief of Staff</strong><ProjectFile goal={goal} />
+          <strong className="speaker">Chief of Staff</strong><ProjectFile goal={goal} openSetup={openSetup} />
         </div></article>
       </React.Fragment>)}
       <div ref={end} />
@@ -420,7 +421,7 @@ function Chat({ goals, connection, submit, addTask }) {
       <Mark />
       <h2>Run your first coding goal</h2>
       <p>Set up a local Codex worker, then queue a change for a Git repository. The worker runs the goal and posts its patch and check here.</p>
-      <button className="subtle" type="button" onClick={() => setupDialog.current.showModal()}>Worker setup</button>
+      <button className="subtle" type="button" onClick={openSetup}>Set up connections</button>
     </section>}
     {showSpecialists && <Specialists request={request} mark={<Mark />} onQueued={addTask} close={() => {
       setShowSpecialists(false)
@@ -443,37 +444,30 @@ function Chat({ goals, connection, submit, addTask }) {
         </div>
       </form>
       <div className="composer-meta"><div className="specialist-actions">
-        {goals.length > 0 && <button className="subtle" type="button" onClick={() => setupDialog.current.showModal()}>Worker setup</button>}
         <ProjectDecision dialog={decisionDialog} />
         <button className="subtle" type="button" ref={specialistTrigger} aria-expanded={showSpecialists}
           onClick={() => setShowSpecialists(open => !open)}>Specialists</button>
       </div><span>Shift + Enter for a new line</span></div>
     </div>
-    <dialog ref={setupDialog} aria-labelledby="worker-title">
-      <h2 id="worker-title">Set up a Codex worker</h2>
-      <p>A worker runs from Terminal for one goal at a time. Queued goals stay saved until a worker claims them.</p>
-      {mac ? <>
-        <p>On an installed Apple silicon Mac, open Docker Desktop. Run this in Terminal to build the image, sign in to Codex, and check the worker sandbox.</p>
-        <pre className="worker-command">{macWorkerCommand('prepare')}</pre>
-        <p>Once the worker preflight passes, load and queue the sample goal. Its queued card gives you the Terminal command for that goal. Return here to review the patch and rerun its check.</p>
-        <p>If the worker reports a sandbox error, follow the <a href={sandboxGuide}>Docker sandbox setup</a> and rerun its command.</p>
-        {draft.trim() && <p>Clear or queue your current draft to load the sample.</p>}
-        <button type="button" className="primary" disabled={sending || !!draft.trim()} onClick={() => {
-          setDraft(sampleGoal)
-          setupDialog.current.close()
-          composer.current?.focus()
-        }}>Load sample goal</button>
-      </> : <p>Follow <a href={sandboxGuide}>local worker setup</a> for your container runtime.</p>}
-      <form method="dialog"><button className="subtle">Close</button></form>
-    </dialog>
+    <Connections dialog={setupDialog} open={setupOpen} onClose={closeSetup} request={request}
+      sandboxGuide={sandboxGuide} sampleDisabled={sending || !!draft.trim()} onSample={() => {
+        setDraft(sampleGoal)
+        setupDialog.current.close()
+        composer.current?.focus()
+      }} />
   </main>
 }
 
 function App() {
   const [connection, setConnection] = useState('checking')
   const [goals, setGoals] = useState([])
-  const dialog = useRef(null)
   const generation = useRef(0)
+  const setupDialog = useRef(null)
+  const [setupOpen, setSetupOpen] = useState(false)
+  function openSetup() {
+    setSetupOpen(true)
+    setupDialog.current.showModal()
+  }
 
   useEffect(() => {
     const controller = new AbortController()
@@ -522,16 +516,12 @@ function App() {
         <span className={'badge ' + (connection === 'ready' ? 'good' : connection === 'offline' ? 'attention' : '')} role="status">
           {{ ready: 'Local service online', checking: 'Connecting to service', offline: 'Service unavailable' }[connection]}
         </span>
-        <button className="subtle" onClick={() => dialog.current.showModal()}>Local service</button>
+        <button className="subtle" onClick={openSetup}>Connections</button>
       </div>
     </header>
     {connection === 'offline' && <p className="connection-note" role="status">Couldn’t reach the local service. Check that Difqo and PostgreSQL are running. This page reconnects automatically.</p>}
-    <Chat goals={goals} connection={connection} submit={submit} addTask={addTask} />
-    <dialog ref={dialog} aria-labelledby="service-title">
-      <h2 id="service-title">Local service</h2>
-      <p>Goals are stored by Difqo in PostgreSQL. A local worker claims and runs them. Start another worker invocation when you want it to take another queued goal.</p>
-      <form method="dialog"><button className="primary">Done</button></form>
-    </dialog>
+    <Chat goals={goals} connection={connection} submit={submit} addTask={addTask} setupDialog={setupDialog}
+      setupOpen={setupOpen} openSetup={openSetup} closeSetup={() => setSetupOpen(false)} />
   </div>
 }
 

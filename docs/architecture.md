@@ -14,7 +14,7 @@ flowchart LR
     LaunchAgent -->|"Run the managed cluster when selected"| Postgres
     Provision -->|"Initialize private loopback cluster"| Postgres
     Provision -->|"Run the same migration command"| Setup
-    Operator -->|"Poll an enrolled repository"| GitHubIntake["Local GitHub intake command"]
+    Operator -->|"Poll an enrolled repository"| GitHubIntake["Local GitHub intake"]
     GitHubIntake -->|"Request the pilot's read-only repository token over HTTPS"| GitHubBroker["GitHub provider in Connections"]
     GitHubBroker -->|"Mint a scoped token and verify owner access"| GitHub
     GitHubIntake -->|"Read installation scope and conversation comments"| GitHub["GitHub API"]
@@ -31,6 +31,12 @@ flowchart LR
     SlackImport -->|"Check the linked app, workspace, operator, and DM"| SlackBinding
     SlackBinding -->|"Save event identity and local task atomically"| Postgres
     Browser -->|"Save decisions, submit goals, and review patches over loopback HTTP"| Server["difqo server"]
+    Browser -->|"Sign in with ChatGPT, link Slack, or connect and sync GitHub"| Server
+    Server -->|"Run the installed Mac setup and sample commands"| WorkerHelper["Packaged Mac worker helper"]
+    WorkerHelper -->|"Build the image and use the Codex device sign-in"| Runtime
+    WorkerHelper -->|"Run the selected sample in a disposable repository"| Worker
+    Server -->|"Connect and sync through the same scoped intake"| GitHubIntake
+    Server -->|"Enroll, link and poll the official Slack DM"| OfficialSlack["Official Connections Slack relay"]
     Browser -->|"Select a project and start an approved specialist revision"| Server
     Operator -->|"Register checkout bindings"| Server
     Operator -->|"Run a project-bound worker"| SpecialistWorker["Specialist worker"]

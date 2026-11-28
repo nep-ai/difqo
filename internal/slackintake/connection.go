@@ -13,6 +13,8 @@ import (
 	"github.com/nep-ai/difqo/internal/store"
 )
 
+var ErrEnrollmentCode = errors.New("invalid Slack pilot enrollment code")
+
 var ErrRelayUnavailable = errors.New("Slack relay is unavailable or returned an invalid result")
 
 type Connections struct {
@@ -23,15 +25,16 @@ type Connections struct {
 }
 
 type ConnectionView struct {
-	Mode       string              `json:"mode"`
-	Generation int64               `json:"generation"`
-	State      string              `json:"state"`
-	OAuthURL   string              `json:"oauth_url,omitempty"`
-	PairingID  string              `json:"pairing_id,omitempty"`
-	Workspace  string              `json:"verified_workspace,omitempty"`
-	Operator   string              `json:"verified_operator,omitempty"`
-	Installed  string              `json:"installed_workspace,omitempty"`
-	Binding    *store.SlackBinding `json:"binding,omitempty"`
+	RequiresCode bool                `json:"requires_code,omitempty"`
+	Mode         string              `json:"mode"`
+	Generation   int64               `json:"generation"`
+	State        string              `json:"state"`
+	OAuthURL     string              `json:"oauth_url,omitempty"`
+	PairingID    string              `json:"pairing_id,omitempty"`
+	Workspace    string              `json:"verified_workspace,omitempty"`
+	Operator     string              `json:"verified_operator,omitempty"`
+	Installed    string              `json:"installed_workspace,omitempty"`
+	Binding      *store.SlackBinding `json:"binding,omitempty"`
 }
 
 func connectionView(s store.SlackConnection) ConnectionView {
@@ -61,6 +64,13 @@ func (c *Connections) Status(ctx context.Context) (ConnectionView, error) {
 }
 
 func (c *Connections) Begin(ctx context.Context) (ConnectionView, error) {
+	return c.BeginWithCode(ctx, "")
+}
+
+func (c *Connections) BeginWithCode(ctx context.Context, code string) (ConnectionView, error) {
+	if code != "" && !oauthState.MatchString(code) {
+		return ConnectionView{}, ErrEnrollmentCode
+	}
 	s, err := c.tasks.UpdateSlackConnection(ctx, func(s *store.SlackConnection) error {
 		if s.Mode == "official" || (s.Mode == "private" && s.Private != nil) {
 			return store.ErrSlackTransition
@@ -70,22 +80,33 @@ func (c *Connections) Begin(ctx context.Context) (ConnectionView, error) {
 		}
 		if s.Pairing != nil && s.Pairing.Relay == c.origin && s.Pairing.State != "reconnect_required" &&
 			time.Now().Before(s.Pairing.Expires) {
+			if code != "" {
+				return c.enroll(ctx, s.Pairing, code)
+			}
 			return nil
 		}
 		var id [16]byte
 		var proof [32]byte
 		rand.Read(id[:])
 		rand.Read(proof[:])
+		pairing := &store.SlackPairing{ID: hex.EncodeToString(id[:]), Proof: hex.EncodeToString(proof[:]),
+			Relay: c.origin, State: "connecting", Expires: time.Now().UTC().Add(15 * time.Minute)}
+		if code != "" {
+			// Only publish a caller-code pairing after the relay confirms
+			// enrollment. A failed request cannot leave a disconnect that
+			// needs the caller code, and an uncommitted proof cannot link a DM.
+			if err := c.enroll(ctx, pairing, code); err != nil {
+				return err
+			}
+		}
 		if s.Mode != "disconnected" {
 			s.Generation++
 		}
-		s.Mode = "disconnected"
-		s.Pairing = &store.SlackPairing{ID: hex.EncodeToString(id[:]), Proof: hex.EncodeToString(proof[:]),
-			Relay: c.origin, State: "connecting", Expires: time.Now().UTC().Add(15 * time.Minute)}
+		s.Mode, s.Pairing = "disconnected", pairing
 		return nil
 	})
-	if err == nil && c.enrollmentToken != "" {
-		err = c.enroll(ctx, s.Pairing)
+	if err == nil && code == "" && c.enrollmentToken != "" {
+		err = c.enroll(ctx, s.Pairing, c.enrollmentToken)
 	}
 	return connectionView(s), err
 }

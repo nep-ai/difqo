@@ -288,9 +288,40 @@ func TestHTTPSRelayDelivery(t *testing.T) {
 		t.Fatalf("disconnect: %s %v", disconnected.State, err)
 	}
 	mu.Lock()
-	defer mu.Unlock()
 	if !claimed || !receipted || !revoked {
+		mu.Unlock()
 		t.Fatal("expected claim, receipt, and revocation over TLS")
+	}
+	proof, pairPath, revoked, firstEnrollment = "", "", false, true
+	mu.Unlock()
+
+	caller, err := NewPilotConnections(tasks, relay.URL, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	trustTestRelay(caller, relay)
+	failed, err := caller.BeginWithCode(ctx, enrollment)
+	if !errors.Is(err, ErrRelayUnavailable) || failed.PairingID != "" {
+		t.Fatalf("failed caller enrollment published a pairing: %+v, %v", failed, err)
+	}
+	view, err := caller.Status(ctx)
+	if err != nil || view.State != "disconnected" || view.PairingID != "" {
+		t.Fatalf("failed caller enrollment persisted a pairing: %+v, %v", view, err)
+	}
+	if _, err := caller.Disconnect(ctx, view.Generation, ""); err != nil {
+		t.Fatalf("disconnect after failed enrollment: %v", err)
+	}
+	mu.Lock()
+	orphan := pairPath
+	proof, pairPath = "", ""
+	mu.Unlock()
+	next, err := caller.BeginWithCode(ctx, enrollment)
+	if err != nil || next.PairingID == "" || "/pairings/"+next.PairingID == orphan {
+		t.Fatalf("caller retry did not create a fresh pairing: %+v, %v", next, err)
+	}
+	if disconnected, err := caller.Disconnect(ctx, next.Generation, next.PairingID); err != nil ||
+		disconnected.State != "disconnected" || disconnected.PairingID != "" {
+		t.Fatalf("disconnect without an enrollment code: %+v, %v", disconnected, err)
 	}
 }
 

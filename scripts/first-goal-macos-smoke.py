@@ -36,8 +36,16 @@ with tempfile.TemporaryDirectory(prefix="difqo-first-goal-") as temporary:
 printf '%s\n' "$*" >> "$DOCKER_CALLS"
 case "$1" in
   info|build|image) exit 0 ;;
+  container)
+    case "$2" in
+      ls) if [ -n "${LOGIN_CONTAINER:-}" ]; then printf '%s\n' "$LOGIN_CONTAINER"; fi ;;
+      rm) [ "$3" = --force ] && [ "$4" = "$LOGIN_CONTAINER" ] ;;
+      *) exit 99 ;;
+    esac
+    ;;
   run)
     if [ "${LOGIN_FAIL:-0}" = 1 ]; then exit 34; fi
+    printf 'Logged in using ChatGPT\n'
     ;;
   *) exit 99 ;;
 esac
@@ -59,6 +67,16 @@ exit "${WORKER_EXIT:-0}"
             ["/bin/bash", str(helper), *args], env={**env, **overrides},
             capture_output=True, text=True, timeout=15,
         )
+
+    cleanup = run("cleanup-login", LOGIN_CONTAINER="synthetic-id")
+    assert cleanup.returncode == 0, cleanup
+    cleanup_args = docker_calls.read_text()
+    assert "container rm --force synthetic-id" in cleanup_args
+    assert f"--filter name=^/difqo-first-goal-login-{os.getuid()}$" in cleanup_args
+    assert f"--filter label=io.difqo.first-goal-login={os.getuid()}" in cleanup_args
+    docker_calls.unlink()
+    assert run("cleanup-login").returncode == 0
+    assert "container rm" not in docker_calls.read_text()
 
     denied_login = run("prepare", LOGIN_FAIL="1")
     assert denied_login.returncode == 34, denied_login
